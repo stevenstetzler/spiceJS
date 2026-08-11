@@ -86,8 +86,9 @@ Calendar formats, month by name, in any field order
 Slash-delimited numeric dates (Month/Day/Year assumed)
   2/3/1996 17:18:12.002, 1978/3/12 23:28:59.29
 
-Day-of-year formats (Year/DOY pair + "//", "::", or "/" marker)
-  1997-162::12:18:28.827, 162-1996/12:28:28.287
+Day-of-year formats (Year/DOY pair + "//", "::", or "/" marker,
+time-of-day leading or trailing)
+  1997-162::12:18:28.827, 162-1996/12:28:28.287, 17:28:01.287 1992-272//
 
 Julian dates -- "JD"/"jd" may appear before or after the number
   JD 2451545.0, 2451545.0 JD, 2451545.0 (JD)

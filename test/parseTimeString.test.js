@@ -110,6 +110,11 @@ test('day-of-year format examples from the str2et_c documentation', () => {
   expectDoy('1993-321/12:28:28.287', 1993, 321, [12, 28, 28.287]);
 });
 
+test('day-of-year format with the time-of-day before the date', () => {
+  expectDoy('17:28:01.287 1992-272//', 1992, 272, [17, 28, 1.287]);
+  expectDoy('17:28:01.282 272-1994//', 1994, 272, [17, 28, 1.282]);
+});
+
 test('Julian date examples from the str2et_c documentation', () => {
   assert.deepEqual(parseTimeString('jd 28272.291'), { contSec: (28272.291 - 2451545.0) * 86400, system: 'UTC' });
   assert.deepEqual(parseTimeString('2451515.2981 (JD)'), {

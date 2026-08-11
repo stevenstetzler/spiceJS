@@ -19,10 +19,11 @@
  *   Slash-delimited numeric calendar dates (Month/Day/Year assumed)
  *     2/3/1996 17:18:12.002, 1978/3/12 23:28:59.29
  *
- *   Day-of-year formats (a dash-separated Year/DOY pair followed by
- *   a "//" or "::" -- or, per NAIF's own examples, a single "/" --
- *   marker)
+ *   Day-of-year formats (a dash-separated Year/DOY pair plus a "//"
+ *   or "::" -- or, per NAIF's own examples, a single "/" -- marker,
+ *   with the time-of-day either trailing or leading)
  *     1997-162::12:18:28.827, 162-1996/12:28:28.287
+ *     17:28:01.287 1992-272//
  *
  *   Julian date (the substring "JD"/"jd" may appear before or after
  *   the number, optionally parenthesized)
@@ -69,10 +70,15 @@ const ISO_RE =
 // Year/day-of-year pair (dash- or space-separated), terminated by
 // NAIF's day-of-year marker. The documented marker is "//" or "::";
 // NAIF's own examples also accept a single "/", so both are honored
-// here. (NAIF's examples also show the time-of-day coming *before*
-// the Year/DOY pair in this format; that ordering isn't supported.)
+// here, with the time-of-day optionally trailing after the marker.
 const DOY_RE =
   /^('?)(\d{1,4})[\s-]('?)(\d{1,4})(?:\/\/?|::)\s*(?:(\d{1,2}):(\d{1,2})(?::(\d{1,2}(?:\.\d+)?))?)?$/;
+
+// Same Year/DOY-pair-plus-marker format, but with the time-of-day
+// leading instead of trailing -- NAIF's own examples include both
+// orderings (e.g. "17:28:01.287 1992-272//").
+const DOY_TIME_FIRST_RE =
+  /^(\d{1,2}):(\d{1,2})(?::(\d{1,2}(?:\.\d+)?))?\s+('?)(\d{1,4})[\s-]('?)(\d{1,4})(?:\/\/?|::)\s*$/;
 
 // Month/Day/Year, all slash-separated, no month name.
 const SLASH_MDY_RE =
@@ -91,6 +97,19 @@ function expandTwoDigitYear(year) {
 function normalizeYear(year) {
   const truncated = Math.trunc(year);
   return truncated >= 0 && truncated <= 99 ? expandTwoDigitYear(truncated) : year;
+}
+
+/**
+ * Resolve which of a Year/DOY pair is the year: a quoted number wins,
+ * then whichever is > 999 (rule 14), else NAIF's documented default
+ * of "the first integer is the year" when neither clue applies.
+ */
+function resolveYearDoy(q1, n1, q2, n2) {
+  if (q1) return { year: n1, doy: n2 };
+  if (q2) return { year: n2, doy: n1 };
+  if (n1 > 999) return { year: n1, doy: n2 };
+  if (n2 > 999) return { year: n2, doy: n1 };
+  return { year: n1, doy: n2 };
 }
 
 function applyAmPm(hour, ampm) {
@@ -198,26 +217,22 @@ export function parseTimeString(raw) {
   m = str.match(DOY_RE);
   if (m) {
     const [, q1, n1Str, q2, n2Str, hh, mi, ss] = m;
-    const n1 = Number(n1Str);
-    const n2 = Number(n2Str);
-    let year;
-    let doy;
-    if (q1) {
-      [year, doy] = [n1, n2];
-    } else if (q2) {
-      [year, doy] = [n2, n1];
-    } else if (n1 > 999) {
-      [year, doy] = [n1, n2];
-    } else if (n2 > 999) {
-      [year, doy] = [n2, n1];
-    } else {
-      // Neither integer is obviously the year: NAIF defaults to
-      // "first integer is the year" in this case.
-      [year, doy] = [n1, n2];
-    }
+    let { year, doy } = resolveYearDoy(q1, Number(n1Str), q2, Number(n2Str));
     year = normalizeYear(year);
     const hour = applyAmPm(hh !== undefined ? Number(hh) : 0, ampm);
     const minute = mi !== undefined ? Number(mi) : 0;
+    const second = ss !== undefined ? Number(ss) : 0;
+    return finish(calendarToSeconds(year, 1, 1, hour, minute, second) + (doy - 1) * 86400);
+  }
+
+  // --- Same format, with the time-of-day leading instead of trailing ---
+  m = str.match(DOY_TIME_FIRST_RE);
+  if (m) {
+    const [, hh, mi, ss, q1, n1Str, q2, n2Str] = m;
+    let { year, doy } = resolveYearDoy(q1, Number(n1Str), q2, Number(n2Str));
+    year = normalizeYear(year);
+    const hour = applyAmPm(Number(hh), ampm);
+    const minute = Number(mi);
     const second = ss !== undefined ? Number(ss) : 0;
     return finish(calendarToSeconds(year, 1, 1, hour, minute, second) + (doy - 1) * 86400);
   }
