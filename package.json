@@ -1,0 +1,33 @@
+{
+  "name": "spicejs",
+  "version": "0.1.0",
+  "description": "A JavaScript library for working with NAIF SPICE kernels, starting with the kernel pool, FURNSH, and STR2ET.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test test/**/*.test.js"
+  },
+  "files": [
+    "src"
+  ],
+  "keywords": [
+    "spice",
+    "naif",
+    "kernel",
+    "spacecraft",
+    "ephemeris",
+    "str2et",
+    "astrodynamics"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stevenstetzler/spiceJS.git"
+  }
+}
