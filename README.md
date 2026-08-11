@@ -64,20 +64,44 @@ str2et('2000-01-01T12:00:00 TDB');
 
 ### Supported `str2et` input formats
 
+`str2et` follows the parsing rules documented for NAIF's own
+[str2et_c](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/cspice/str2et_c.html)
+(see `src/time/parseTimeString.js` for the rule-by-rule implementation
+and a large regression test transcribed directly from that page's
+examples):
+
 ```
-2026-08-11T12:00:00.500      ISO calendar (UTC by default)
-2026-08-11 12:00:00
-2026-08-11
-2026 AUG 11 12:00:00         SPICE-style calendar, any field order
-11 AUG 2026 12:00:00
-AUG 11, 2026 12:00:00
-JD 2451545.0                 Julian date
-2026-08-11T12:00:00 TDB      explicit time system suffix (UTC/TDB/ET)
+ISO ("T") formats
+  2026-08-11T12:00:00.500, 2026-08-11 12:00:00
+  1986-01-18T12, 1986-01-18T12:19:52.18Z
+  1995-08T18:28:12          (2 date fields -> Year + Day-of-Year)
+
+Calendar formats, month by name, in any field order
+  2026 AUG 11 12:00:00, 11 AUG 2026 12:00:00, AUG 11, 2026 12:00:00
+  17JUN1982 18:28:28        (letters need not be delimited from digits)
+  Tue Aug 6 11:10:57 1996   (weekday is ignored)
+  '93 Jan 23 ...            (quoted 2-digit year)
+  23 A.D. APR 4 ..., 18 B.C. Jun 3 ...
+
+Slash-delimited numeric dates (Month/Day/Year assumed)
+  2/3/1996 17:18:12.002, 1978/3/12 23:28:59.29
+
+Day-of-year formats (Year/DOY pair + "//", "::", or "/" marker)
+  1997-162::12:18:28.827, 162-1996/12:28:28.287
+
+Julian dates -- "JD"/"jd" may appear before or after the number
+  JD 2451545.0, 2451545.0 JD, 2451545.0 (JD)
+
+Labels, anywhere in the string
+  ... TDB / ... UTC          time system (TDT is not yet supported)
+  ... A.M. / ... P.M.
+  ... EST/EDT/CST/CDT/MST/MDT/PST/PDT, ... UTC+5:30
 ```
 
 A calendar string needs either an ISO `YYYY-MM-DD` date or a month
 name -- three numeric fields with no month name (e.g. `01 02 03`) is
-rejected as ambiguous rather than guessed at.
+rejected as ambiguous rather than guessed at, matching NAIF's own
+"ambiguous string" behavior.
 
 ### Isolated kernel pools
 
