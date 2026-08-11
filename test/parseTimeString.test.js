@@ -41,8 +41,8 @@ test('explicit TDB/ET suffix is recognized and passed through unchanged', () => 
   assert.deepEqual(parseTimeString('2000-01-01T12:00:00 ET'), { contSec: J2000_NOON, system: 'TDB' });
 });
 
-test('rejects the unsupported TDT system', () => {
-  assert.throws(() => parseTimeString('2000-01-01T12:00:00 TDT'), /TDT/);
+test('TDT-labeled strings pass through with system "TDT", uncorrected', () => {
+  assert.deepEqual(parseTimeString('2000-01-01T12:00:00 TDT'), { contSec: J2000_NOON, system: 'TDT' });
 });
 
 test('rejects free-form dates with no month name at all', () => {

@@ -69,3 +69,24 @@ test('str2et rejects UTC dates before the leapseconds table starts', () => {
   const pool = poolWithLsk();
   assert.throws(() => str2et('1960-01-01T00:00:00', pool), RangeError);
 });
+
+test('TDT-labeled strings need a leapseconds kernel (for K/EB/M) but no leap-second table lookup', () => {
+  const pool = new KernelPool();
+  assert.throws(() => str2et('2000-01-01T12:00:00 TDT', pool), /leapseconds kernel/);
+});
+
+test('TDT differs from TDB only by the sub-millisecond periodic term', () => {
+  const pool = poolWithLsk();
+  const tdb = str2et('2000-01-01T12:00:00 TDB', pool);
+  const tdt = str2et('2000-01-01T12:00:00 TDT', pool);
+  assert.equal(tdb, 0);
+  assert.notEqual(tdt, 0);
+  assert.ok(Math.abs(tdt) < 0.002, `expected a sub-millisecond correction, got ${tdt}`);
+});
+
+test('TDT is unaffected by leap seconds -- no jump across the 1999 boundary', () => {
+  const pool = poolWithLsk();
+  const before = str2et('1998-12-31T23:59:59 TDT', pool);
+  const after = str2et('1999-01-01T00:00:00 TDT', pool);
+  assert.ok(Math.abs(after - before - 1) < 1e-6, `expected exactly 1s gap, got ${after - before}`);
+});

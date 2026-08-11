@@ -20,7 +20,9 @@ Supported today:
 - Loading **text kernels** (`KPL/LSK`, and generically any `KPL/*`
   variable-assignment kernel) and **meta-kernels** (`KPL/MK`, with
   `PATH_SYMBOLS`/`PATH_VALUES`/`KERNELS_TO_LOAD`).
-- `str2et()` for UTC and TDB calendar strings and Julian dates.
+- `str2et()`, following NAIF's own documented `str2et_c` grammar:
+  UTC/TDB/TDT calendar strings, ISO strings, day-of-year strings,
+  slash-delimited dates, and Julian dates (see below).
 - `et2utc()` / `et2utcCalendar()` as a basic inverse, mostly useful
   for testing.
 
@@ -28,8 +30,8 @@ Not yet supported (all fail with a clear error, not a silent wrong
 answer):
 - Binary kernels (SPK, PCK, CK, DSK, ...) -- these use NAIF's DAF/DAS
   binary formats and are a separate, larger effort.
-- Spacecraft clock (SCLK) strings, day-of-year time strings, and the
-  TDT time system.
+- Spacecraft clock (SCLK) strings and general time zones beyond the
+  handful `str2et_c` itself documents (the U.S. zones, and `UTC±H:MM`).
 - UTC epochs before 1972-JAN-1 (where the leapseconds table starts).
 
 ## Install
@@ -94,7 +96,7 @@ Julian dates -- "JD"/"jd" may appear before or after the number
   JD 2451545.0, 2451545.0 JD, 2451545.0 (JD)
 
 Labels, anywhere in the string
-  ... TDB / ... UTC          time system (TDT is not yet supported)
+  ... TDB / ... TDT / ... UTC   time system
   ... A.M. / ... P.M.
   ... EST/EDT/CST/CDT/MST/MDT/PST/PDT, ... UTC+5:30
 ```
@@ -125,8 +127,9 @@ entirely by values loaded from the leapseconds kernel rather than
 hardcoded constants:
 
 ```
-ET = UTC + DELTA_AT + DELTA_T_A + K * sin(E)
-E  = M0 + M1 * T + EB * sin(M0 + M1 * T)
+TT (= TDT) = UTC + DELTA_AT + DELTA_T_A
+ET (= TDB) = TT + K * sin(E)
+E          = M0 + M1 * T + EB * sin(M0 + M1 * T)
 ```
 
 - `DELTA_AT` is the whole-second TAI-UTC leap second count in effect
@@ -135,6 +138,9 @@ E  = M0 + M1 * T + EB * sin(M0 + M1 * T)
 - `DELTA_T_A`, `K`, `EB`, and `M` come from the LSK's `DELTET/*`
   variables and model the (sub-millisecond) periodic difference
   between Terrestrial Time and Barycentric Dynamical Time.
+
+A `TDT`-labeled string skips straight to the second equation (it's
+already TT); a `TDB`-labeled string skips both entirely.
 
 See `src/time/deltet.js` and `src/time/calendar.js` for the full
 implementation and comments.

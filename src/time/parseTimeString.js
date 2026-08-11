@@ -30,19 +30,22 @@
  *     jd 28272.291, 2451515.2981 (JD), 2451515.2981 JD
  *
  *   Time system / zone labels
- *     ... TDB, ... TDT (rejected -- see below), ... UTC
+ *     ... TDB, ... TDT, ... UTC
  *     ... A.M. / P.M.
  *     ... EST/EDT/CST/CDT/MST/MDT/PST/PDT, ... UTC+5:30
  *
- * Not supported (all fail with a descriptive Error rather than a
- * silent wrong answer): the TDT time system, and any string ambiguous
- * enough that NAIF's own rules don't resolve it either.
+ * Not supported: any string ambiguous enough that NAIF's own rules
+ * don't resolve it either (these fail with a descriptive Error rather
+ * than a silent wrong answer).
  *
  * The result is `{ contSec, system }`: `contSec` is continuous
- * seconds past J2000 (see calendar.js), already adjusted for any
- * time zone offset so it is in UTC or TDB terms; `system` is 'UTC' or
- * 'TDB' and tells the caller (str2et.js) whether `contSec` still
- * needs the leapseconds correction.
+ * seconds past J2000 (see calendar.js) exactly as read off the
+ * string's own clock -- no time-zone, leapseconds, or TDB/TDT
+ * conversion has been applied yet (aside from folding any time zone
+ * offset into `contSec` and reporting `system: 'UTC'`, since a time
+ * zone is inherently UTC-relative). `system` is 'UTC', 'TDB', or
+ * 'TDT' and tells the caller (str2et.js) what -- if anything -- still
+ * needs to be done to turn `contSec` into ephemeris time.
  */
 import { calendarToSeconds, monthNumber } from './calendar.js';
 
@@ -153,9 +156,6 @@ export function parseTimeString(raw) {
   if (m) {
     const label = m[1].toUpperCase();
     system = label === 'ET' ? 'TDB' : label;
-  }
-  if (system === 'TDT') {
-    throw new Error(`str2et: the TDT time system is not yet supported (in "${raw}")`);
   }
   if (tzOffsetHours !== 0 && system !== 'UTC') {
     throw new Error(`str2et: a time zone cannot be combined with the ${system} time system (in "${raw}")`);
