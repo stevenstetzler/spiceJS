@@ -2,16 +2,19 @@
  * The kernel pool: an in-memory store of named variables loaded from
  * text kernels (LSK, PCK, FK, IK, SCLK, ...), mirroring the "kernel
  * pool" concept in NAIF's SPICE toolkit (see the POOL required
- * reading, and routines like PDPOOL/PCPOOL/GDPOOL/GCPOOL).
- *
- * Every pool variable is an array of values (strings and/or numbers),
- * even single-valued ones -- this matches how SPICE itself stores
- * pool variables.
+ * reading, and routines like PDPOOL/PCPOOL/GDPOOL/GCPOOL) -- plus an
+ * index of segments loaded from binary SPK (trajectory) kernels. Text
+ * variables and SPK segments are unrelated data, but both are "what
+ * furnsh() has loaded so far", so this class holds both rather than
+ * threading a second piece of state through furnsh()/unload()/every
+ * query function.
  */
 export class KernelPool {
   constructor() {
     /** @type {Map<string, Array<string|number>>} */
     this._vars = new Map();
+    /** @type {Map<number, Array<object>>} target body ID -> SPK segments */
+    this._spkSegmentsByTarget = new Map();
   }
 
   /**
@@ -55,9 +58,43 @@ export class KernelPool {
     return Array.from(this._vars.keys());
   }
 
-  /** Remove every variable from the pool (as in SPICE's kclear_c). */
+  /** Index SPK segments (see spk.js's loadSpk()) by their target body ID. */
+  addSpkSegments(segments) {
+    for (const segment of segments) {
+      const list = this._spkSegmentsByTarget.get(segment.target);
+      if (list) {
+        list.push(segment);
+      } else {
+        this._spkSegmentsByTarget.set(segment.target, [segment]);
+      }
+    }
+  }
+
+  /** Undo addSpkSegments() for exactly these segment objects (used by unload()). */
+  removeSpkSegments(segments) {
+    for (const segment of segments) {
+      const list = this._spkSegmentsByTarget.get(segment.target);
+      if (!list) continue;
+      const idx = list.indexOf(segment);
+      if (idx !== -1) list.splice(idx, 1);
+      if (list.length === 0) this._spkSegmentsByTarget.delete(segment.target);
+    }
+  }
+
+  /** Loaded SPK segments with the given target body ID (empty array if none). */
+  getSpkSegments(target) {
+    return this._spkSegmentsByTarget.get(target) || [];
+  }
+
+  /** Every loaded SPK segment, across all target bodies. */
+  allSpkSegments() {
+    return Array.from(this._spkSegmentsByTarget.values()).flat();
+  }
+
+  /** Remove every variable and SPK segment from the pool (as in SPICE's kclear_c). */
   clear() {
     this._vars.clear();
+    this._spkSegmentsByTarget.clear();
   }
 }
 

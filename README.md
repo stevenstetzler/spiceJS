@@ -25,11 +25,23 @@ Supported today:
   slash-delimited dates, and Julian dates (see below).
 - `et2utc()` / `et2utcCalendar()` as a basic inverse, mostly useful
   for testing.
+- Loading **binary SPK** (trajectory) kernels and reading the
+  position/velocity they contain (`spkState()`) -- see below.
 
 Not yet supported (all fail with a clear error, not a silent wrong
 answer):
-- Binary kernels (SPK, PCK, CK, DSK, ...) -- these use NAIF's DAF/DAS
-  binary formats and are a separate, larger effort.
+- Other binary kernels (PCK, CK) and DAS-based kernels (DSK) -- PCK/CK
+  share SPK's DAF container (`src/daf.js`) and are natural next steps;
+  DSK is a different container format entirely.
+- SPK segment types other than 2 and 3 (Chebyshev) -- covers the vast
+  majority of publicly distributed planetary/lunar kernels, but not
+  e.g. spacecraft kernels using Lagrange/Hermite interpolation (types
+  5, 8/9/12/13).
+- Looking up a target/observer pair that isn't *exactly* one loaded
+  segment (SPICE's `spkezr_c`/`spkgeo_c` search across intermediate
+  bodies -- e.g. Mars relative to Earth via the barycenter -- spiceJS
+  doesn't chain segments together yet) or that needs a frame transform
+  (positions come back in the segment's native frame, unconverted).
 - Spacecraft clock (SCLK) strings and general time zones beyond the
   handful `str2et_c` itself documents (the U.S. zones, and `UTC±H:MM`).
 - UTC epochs before 1972-JAN-1 (where the leapseconds table starts).
@@ -145,11 +157,48 @@ already TT); a `TDB`-labeled string skips both entirely.
 See `src/time/deltet.js` and `src/time/calendar.js` for the full
 implementation and comments.
 
+## Reading trajectories from binary SPK kernels
+
+```js
+import { furnsh, spkState, spkSegments } from './src/index.js';
+
+furnsh('/path/to/de440s.bsp');
+
+spkSegments();
+//=> [{ target: 499, center: 0, frame: 1, type: 2, startEt: ..., stopEt: ... }, ...]
+
+// Mars (499) relative to the Solar System Barycenter (0), in km / km/s,
+// in the segment's native frame (J2000 for most generic kernels).
+const { position, velocity } = spkState(499, 0, someEt);
+```
+
+`spkState(target, center, et, pool?)` is a **direct** lookup: it needs
+a loaded segment whose `(target, center)` match exactly (use
+`spkSegments()` to see what's available) -- it does not search across
+intermediate bodies the way `spkezr_c`/`spkgeo_c` do. For most generic
+planetary kernels this covers the common cases directly (e.g. any
+planet relative to the SSB, the Moon relative to the Earth-Moon
+barycenter); a body relative to an arbitrary third body may need an
+intermediate step of your own for now.
+
+The binary format itself (`src/daf.js` for the generic DAF container,
+`src/spk.js` for SPK's segment layout and Chebyshev evaluation) was
+derived directly from NAIF's own source (`zzdafnfr.c`, `dafps.c`,
+`spkr02.c`/`spke02.c`, `spkr03.c`/`spke03.c` in the
+[OpenSpace/Spice](https://github.com/OpenSpace/Spice) mirror), not
+guessed at -- see the doc comments in those two files for the byte
+layout. Because a real `.bsp` is tens-to-hundreds of megabytes and
+`naif.jpl.nasa.gov` isn't reachable from every environment, the test
+suite validates this against a synthetic SPK file it builds itself
+(`test/helpers/writeSpk.js`) encoding an exactly-checkable linear
+trajectory, rather than a bundled real kernel.
+
 ## Development
 
 ```sh
 npm test        # runs the test suite (node's built-in test runner)
 node examples/basic.mjs
+node examples/spk.mjs
 ```
 
 ## Acknowledgements
