@@ -15,6 +15,8 @@ export class KernelPool {
     this._vars = new Map();
     /** @type {Map<number, Array<object>>} target body ID -> SPK segments */
     this._spkSegmentsByTarget = new Map();
+    /** @type {Map<number, Array<object>>} frame ID -> PCK segments */
+    this._pckSegmentsByFrame = new Map();
   }
 
   /**
@@ -91,10 +93,44 @@ export class KernelPool {
     return Array.from(this._spkSegmentsByTarget.values()).flat();
   }
 
-  /** Remove every variable and SPK segment from the pool (as in SPICE's kclear_c). */
+  /** Index PCK segments (see pck.js's loadPck()) by their frame ID. */
+  addPckSegments(segments) {
+    for (const segment of segments) {
+      const list = this._pckSegmentsByFrame.get(segment.frame);
+      if (list) {
+        list.push(segment);
+      } else {
+        this._pckSegmentsByFrame.set(segment.frame, [segment]);
+      }
+    }
+  }
+
+  /** Undo addPckSegments() for exactly these segment objects (used by unload()). */
+  removePckSegments(segments) {
+    for (const segment of segments) {
+      const list = this._pckSegmentsByFrame.get(segment.frame);
+      if (!list) continue;
+      const idx = list.indexOf(segment);
+      if (idx !== -1) list.splice(idx, 1);
+      if (list.length === 0) this._pckSegmentsByFrame.delete(segment.frame);
+    }
+  }
+
+  /** Loaded PCK segments with the given frame ID (empty array if none). */
+  getPckSegments(frameId) {
+    return this._pckSegmentsByFrame.get(frameId) || [];
+  }
+
+  /** Every loaded PCK segment, across all frames. */
+  allPckSegments() {
+    return Array.from(this._pckSegmentsByFrame.values()).flat();
+  }
+
+  /** Remove every variable, SPK segment, and PCK segment from the pool (as in SPICE's kclear_c). */
   clear() {
     this._vars.clear();
     this._spkSegmentsByTarget.clear();
+    this._pckSegmentsByFrame.clear();
   }
 }
 

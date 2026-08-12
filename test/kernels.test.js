@@ -65,7 +65,7 @@ test('furnsh rejects a binary kernel type it does not support yet, with a helpfu
   const fakeCk = path.join(os.tmpdir(), `spicejs-test-fake-${process.pid}.bc`);
   fs.writeFileSync(fakeCk, 'DAF/CK                                                                          ');
   try {
-    assert.throws(() => furnsh(fakeCk, pool), /Only binary SPK kernels are supported/);
+    assert.throws(() => furnsh(fakeCk, pool), /Only binary SPK and PCK kernels are supported/);
   } finally {
     fs.unlinkSync(fakeCk);
   }

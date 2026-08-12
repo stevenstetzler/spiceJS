@@ -32,11 +32,12 @@
  *     polynomial, evaluated directly (no differentiation, no RADIUS
  *     scaling).
  */
-import { parseDaf, readWords } from './daf.js';
+import { parseDaf } from './daf.js';
 import { evaluate, evaluateWithDerivative } from './math/chebyshev.js';
+import { selectRecord } from './math/chebyshevRecord.js';
 import { add, sub, scale, cross, norm, unit, rotateAboutAxis } from './math/vector3.js';
 import { globalPool } from './pool.js';
-import { frameId as resolveFrameId, rotateState } from './frames.js';
+import { frameId as resolveFrameId, frameCenter, rotateState } from './frames.js';
 import { bodyCode } from './bodies.js';
 
 const SPK_ND = 2;
@@ -73,24 +74,6 @@ export function loadSpk(buffer) {
     buffer,
     littleEndian: daf.littleEndian,
   }));
-}
-
-function readEpilog(segment) {
-  const [init, intlen, recordSize, recordCount] = readWords(
-    segment.buffer,
-    segment.littleEndian,
-    segment.endAddr - 3,
-    segment.endAddr
-  );
-  return { init, intlen, recordSize: Math.round(recordSize), recordCount: Math.round(recordCount) };
-}
-
-function selectRecord(segment, et) {
-  const { init, intlen, recordSize, recordCount } = readEpilog(segment);
-  let recno = Math.floor((et - init) / intlen);
-  recno = Math.min(Math.max(recno, 0), recordCount - 1);
-  const recordStart = segment.startAddr + recno * recordSize;
-  return readWords(segment.buffer, segment.littleEndian, recordStart, recordStart + recordSize - 1);
 }
 
 function evaluateType2(segment, et) {
@@ -327,6 +310,39 @@ function correctedPosition(pool, target, observer, et, correction) {
   return stellarAberration(relative.position, obsVelocity);
 }
 
+/**
+ * Like correctedPosition(), but additionally rotated into `frameId`
+ * (see rotateState()) at the epoch appropriate for that frame under
+ * `correction` (see nonInertialFrameEpoch()) -- i.e. the *whole*
+ * aberration-corrected-and-rotated position, as a function of `et`.
+ *
+ * spkez() central-differences *this* (rather than differencing
+ * correctedPosition() and applying a fixed-epoch rotation afterward)
+ * to get velocity when `frameId` is non-inertial and light-time
+ * correction is in play: real SPICE's non-inertial `ref` support
+ * evaluates the frame's orientation at `et + ltsign*ltcent`, and
+ * `ltcent` itself varies with `et` (it's a light time), so the
+ * rotation is not simply a fixed matrix applied to an
+ * already-differentiated velocity -- there's an extra chain-rule term
+ * (NAIF's spkez.c scales the rotation derivative block by
+ * `1 + ltsign*d(ltcent)/d(et)` to account for exactly this). Central-
+ * differencing the fully-corrected-and-rotated position captures that
+ * term automatically, the same way spkez() already avoids hand-
+ * deriving `d(lightTime)/d(et)` for the target/observer correction
+ * itself (see VELOCITY_DERIVATIVE_STEP_S below).
+ */
+function correctedPositionInFrame(pool, target, observer, et, correction, frameId) {
+  const observerState = chainStateToSsb(pool, observer, et);
+  const { relative, lightTime } = lightTimeCorrectedRelative(pool, target, observer, observerState, et, correction);
+  let position = relative.position;
+  if (correction.stellar) {
+    const obsVelocity = correction.xmit ? scale(observerState.velocity, -1) : observerState.velocity;
+    position = stellarAberration(position, obsVelocity);
+  }
+  const rotationEt = nonInertialFrameEpoch(pool, frameId, target, observer, et, observerState, correction, lightTime);
+  return rotateState(relative.frame, frameId, position, [0, 0, 0], rotationEt, pool).position;
+}
+
 // Step size for the central-difference velocity of an aberration-
 // corrected position (see spkez()). 1 second is tiny relative to how
 // smoothly orbital positions vary (truncation error is negligible),
@@ -358,6 +374,7 @@ const ABCORR = {
  * same correction applied to `-vobs` (NAIF's stlabx_).
  */
 function stellarAberration(position, vobs) {
+  if (norm(position) === 0) return position.slice(); // no direction to rotate a zero-length vector toward
   const vbyc = scale(vobs, 1 / CLIGHT_KM_S);
   if (vbyc[0] * vbyc[0] + vbyc[1] * vbyc[1] + vbyc[2] * vbyc[2] >= 1) {
     throw new Error('spkez: observer speed is >= the speed of light -- cannot apply stellar aberration');
@@ -366,6 +383,35 @@ function stellarAberration(position, vobs) {
   const sinPhi = norm(h);
   if (sinPhi === 0) return position.slice();
   return rotateAboutAxis(position, h, Math.asin(sinPhi));
+}
+
+/**
+ * The epoch at which a non-inertial `ref` frame's orientation should
+ * be evaluated, per NAIF's documented rule (spkez.c): for `abcorr`
+ * other than 'NONE', it's not simply `et` -- it's `et + ltsign*ltcent`,
+ * where `ltcent` is the light time between the *frame's center body*
+ * and the observer (0 if the frame is centered on the observer
+ * itself, the already-computed target light time if centered on the
+ * target, or a fresh light-time computation otherwise), and `ltsign`
+ * matches the correction's reception/transmission direction. For
+ * inertial frames (frameCenter() returns `null`) or `abcorr='NONE'`
+ * (no light-time correction at all), this is just `et`.
+ */
+function nonInertialFrameEpoch(pool, frameId, target, observer, et, observerState, correction, targetLightTime) {
+  if (correction.maxIter === 0 && !correction.stellar) return et; // 'NONE'
+  const center = frameCenter(frameId, pool);
+  if (center === null) return et; // inertial: time-independent, epoch doesn't matter
+
+  let ltcent;
+  if (center === observer) {
+    ltcent = 0;
+  } else if (center === target) {
+    ltcent = targetLightTime;
+  } else {
+    ltcent = lightTimeCorrectedRelative(pool, center, observer, observerState, et, correction).lightTime;
+  }
+  const ltSign = correction.xmit ? 1 : -1;
+  return et + ltSign * ltcent;
 }
 
 /**
@@ -388,14 +434,16 @@ function stellarAberration(position, vobs) {
  *   converged) correction for the "reception" case, X-prefixed are
  *   the "transmission" case, and +S additionally applies stellar
  *   aberration.
- * @param {string} [ref] - name of one of the 21 built-in inertial
- *   frames (e.g. 'J2000', 'ECLIPJ2000', 'B1950', 'GALACTIC' -- see
- *   frames.js) to express the result in. Omit (the default) to get
- *   the result in whatever frame the involved segments natively use,
- *   unrotated. Body-fixed frames (IAU_MARS, ...) aren't supported
- *   yet. If the segments along the way don't all natively agree on
- *   one frame, that's a clear error regardless of `ref` -- there's no
- *   rotation to reconcile them without knowing which one you want.
+ * @param {string} [ref] - name of a supported reference frame (one of
+ *   the 21 built-in inertial frames, e.g. 'J2000', 'ECLIPJ2000',
+ *   'B1950', 'GALACTIC'; a built-in body-fixed frame, e.g. 'IAU_MOON',
+ *   'IAU_EARTH'; or a frame defined by a loaded frame kernel, e.g.
+ *   'MOON_PA', 'MOON_ME' -- see frames.js) to express the result in.
+ *   Omit (the default) to get the result in whatever frame the
+ *   involved segments natively use, unrotated. If the segments along
+ *   the way don't all natively agree on one frame, that's a clear
+ *   error regardless of `ref` -- there's no rotation to reconcile them
+ *   without knowing which one you want.
  * @param {import('./pool.js').KernelPool} [pool]
  * @returns {{ position: number[], velocity: number[], lightTime: number }}
  *
@@ -444,13 +492,37 @@ export function spkez(target, observer, et, abcorr = 'NONE', ref = null, pool = 
   }
 
   if (ref !== null && relative.frame !== null) {
-    // Rotation is a fixed (time-independent) linear map for these
-    // inertial frames, so it commutes with the central-difference
-    // velocity above: rotating the already-computed position and
-    // velocity is exactly equivalent to (and simpler than) rotating
-    // inside the differentiated function.
-    const targetFrameId = resolveFrameId(ref);
-    ({ position, velocity } = rotateState(relative.frame, targetFrameId, position, velocity));
+    const targetFrameId = resolveFrameId(ref, pool);
+    const rotationEt = nonInertialFrameEpoch(
+      pool,
+      targetFrameId,
+      target,
+      observer,
+      et,
+      observerState,
+      correction,
+      lightTime
+    );
+    const rotated = rotateState(relative.frame, targetFrameId, position, velocity, rotationEt, pool);
+    position = rotated.position;
+
+    // frameCenter() === null means an inertial frame: rotationEt === et
+    // always (see nonInertialFrameEpoch()) and the rotation is a fixed
+    // matrix, so rotated.velocity (the exact analytic R*v) is already
+    // correct -- same as it's always been. For a non-inertial frame
+    // under light-time correction, rotationEt is itself a function of
+    // et (through ltcent, a light time), which adds a chain-rule term
+    // rotated.velocity doesn't capture (see correctedPositionInFrame()'s
+    // doc comment) -- central-differencing the whole rotated position
+    // captures it for free, just like the un-rotated case above.
+    if ((correction.maxIter > 0 || correction.stellar) && frameCenter(targetFrameId, pool) !== null) {
+      const h = VELOCITY_DERIVATIVE_STEP_S;
+      const plus = correctedPositionInFrame(pool, target, observer, et + h, correction, targetFrameId);
+      const minus = correctedPositionInFrame(pool, target, observer, et - h, correction, targetFrameId);
+      velocity = scale(sub(plus, minus), 1 / (2 * h));
+    } else {
+      velocity = rotated.velocity;
+    }
   }
 
   return { position, velocity, lightTime };

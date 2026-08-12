@@ -9,6 +9,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const fixturesDir = path.join(here, 'fixtures');
 
 furnsh(path.join(here, '../kernels/naif0012.tls'));
+furnsh(path.join(here, 'pck00010.tpc'));
 furnsh(path.join(fixturesDir, 'kernel.bsp'));
 
 const { str2etCases, spkezCases, spkezrCases } = JSON.parse(

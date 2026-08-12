@@ -31,25 +31,31 @@ Supported today:
   arbitrary target/observer pairs, in either NAIF ID (`spkez()`) or
   body **name** string (`spkezr()`) form -- see below.
 - Rotating a state into any of the 21 **built-in inertial frames**
-  (J2000, B1950, ECLIPJ2000, GALACTIC, ...) via `spkez()`/`spkezr()`'s
-  `ref` parameter.
+  (J2000, B1950, ECLIPJ2000, GALACTIC, ...), the ~123 built-in
+  **body-fixed** frames (`IAU_MARS`, `IAU_EARTH`, `IAU_MOON`, ...), or
+  any frame defined by a loaded **frame kernel** (FK) -- via
+  `spkez()`/`spkezr()`'s `ref` parameter.
+- Loading **binary PCK** (body orientation) kernels (`pckSegments()`),
+  used for the time-varying, angular-velocity-aware half of body-fixed
+  frame support above.
 
 Not yet supported (all fail with a clear error, not a silent wrong
 answer):
-- Other binary kernels (PCK, CK) and DAS-based kernels (DSK) -- PCK/CK
-  share SPK's DAF container (`src/daf.js`) and are natural next steps;
+- Other binary kernels (CK) and DAS-based kernels (DSK) -- CK shares
+  SPK/PCK's DAF container (`src/daf.js`) and is a natural next step;
   DSK is a different container format entirely.
-- SPK segment types other than 2 and 3 (Chebyshev) -- covers the vast
-  majority of publicly distributed planetary/lunar kernels, but not
-  e.g. spacecraft kernels using Lagrange/Hermite interpolation (types
-  5, 8/9/12/13).
-- **Body-fixed** frames (`IAU_MARS`, `IAU_EARTH`, ...) -- these rotate
-  with the planet, so (unlike the 21 built-in inertial frames) they
-  need reading text PCK orientation constants (a new kernel type), a
-  time-dependent pole/prime-meridian formula, and angular velocity for
-  the velocity half of a state. A mismatched/body-fixed frame anywhere
-  in a chain, or between target and observer, is a clear error rather
-  than a silent wrong answer.
+- SPK/PCK segment types other than 2 (and, for SPK, 3) -- Chebyshev
+  covers the vast majority of publicly distributed planetary/lunar
+  kernels, but not e.g. spacecraft kernels using Lagrange/Hermite
+  interpolation (types 5, 8/9/12/13).
+- CK (spacecraft-orientation), dynamic, and switch reference frames,
+  and the one built-in class 4 frame in NAIF's table (`EARTH_FIXED`, a
+  hardcoded ITRF93-relative frame, not PCK-driven). A mismatched frame
+  anywhere in a chain, or between target and observer, is a clear
+  error rather than a silent wrong answer.
+- Orientation constants defined relative to an epoch or frame other
+  than J2000 (`BODY#_CONSTANTS_JED_EPOCH`/`_REF_FRAME`) -- rare in
+  practice; a loaded kernel that sets either is a clear error.
 - Spacecraft clock (SCLK) strings and general time zones beyond the
   handful `str2et_c` itself documents (the U.S. zones, and `UTC±H:MM`).
 
@@ -256,13 +262,16 @@ spkez(499, 0, someEt, 'LT+S', 'ECLIPJ2000');
 spkezr('MARS', 'SSB', someEt, 'LT+S', 'ECLIPJ2000');
 ```
 
-`ref` accepts the name of any of the **21 built-in inertial frames**:
-`J2000`, `B1950`, `FK4`, `GALACTIC`, `ECLIPJ2000`, `ECLIPB1950`, and
-the `DE-*` ephemeris frames (see `src/data/inertialFrames.js` for the
-full list). Body-fixed frames (`IAU_MARS`, ...) aren't supported yet.
-Omit `ref` (or pass `null`) to get the native, unrotated frame, same
-as before. If the segments involved don't already agree on one native
-frame, that's still a clear error regardless of `ref` -- there's no
+`ref` accepts the name of any of the **21 built-in inertial frames**
+(`J2000`, `B1950`, `FK4`, `GALACTIC`, `ECLIPJ2000`, `ECLIPB1950`, and
+the `DE-*` ephemeris frames -- see `src/data/inertialFrames.js` for
+the full list), any of the **~123 built-in body-fixed frames**
+(`IAU_MARS`, `IAU_EARTH`, `IAU_MOON`, ... -- see
+`src/data/bodyFixedFrames.js`), or a frame defined by a loaded frame
+kernel (see "Body-fixed frames and frame kernels" below). Omit `ref`
+(or pass `null`) to get the native, unrotated frame, same as before.
+If the segments involved don't already agree on one native frame,
+that's still a clear error regardless of `ref` -- there's no
 rotation to reconcile mismatched *inputs*, only to produce a requested
 *output*.
 
@@ -286,23 +295,68 @@ exactly-checkable linear trajectories, rather than a bundled real
 kernel -- and `crossval/` (see below) checks it against real CSPICE
 directly.
 
+## Body-fixed frames and frame kernels
+
+Beyond the 21 fixed-matrix inertial frames, `ref` also resolves
+**body-fixed** frames -- ones that rotate with a planet or moon, so
+their orientation (and its time derivative, for the velocity half of a
+state) has to be evaluated at the epoch of interest:
+
+```js
+import { furnsh, spkezr } from './src/index.js';
+
+furnsh('/path/to/pck00010.tpc'); // text PCK: classic BODY#_POLE_RA/DEC/PM constants
+furnsh('/path/to/de440s.bsp');
+
+// Earth's state relative to the Sun, expressed in Mars' body-fixed frame.
+spkezr('EARTH', 'SUN', someEt, 'LT+S', 'IAU_MARS');
+```
+
+`IAU_MARS`/`IAU_EARTH`/`IAU_MOON`/... are ~123 built-in frames driven
+by the classic RA/DEC/W polynomial-plus-periodic-term orientation
+formula (NAIF's `tisbod.c`/`bodeul.c`), read from a loaded text PCK's
+`BODY#_POLE_RA`/`_POLE_DEC`/`_PM` (and optional `_NUT_PREC_*`)
+variables -- see `src/bodyOrientation.js`.
+
+Loading a **binary PCK** (`furnsh('/path/to/moon_pa_de440.bpc')`) adds
+higher-accuracy, Chebyshev-fit orientation data, indexed by frame ID
+rather than body ID; `frames.js` prefers it over the classic formula
+whenever both are available for the requested frame and epoch, per
+NAIF's own documented priority. A loaded **frame kernel** (FK, an
+ordinary `KPL/FK` text kernel -- no special loading code needed) can
+additionally define:
+- new **PCK-driven** frame names/IDs pointing at a binary PCK's own
+  frame ID (e.g. `MOON_PA_DE440`, backing the generic `MOON_PA` alias);
+- **fixed-offset (TK)** frames, a constant rotation (`MATRIX`, or
+  `ANGLES`+`AXES`+`UNITS`) relative to another named frame (e.g.
+  `MOON_ME_DE440_ME421`, offset from `MOON_PA_DE440`).
+
+Both orientation formula, both binary PCK types, and the TK frame math
+(`src/math/eulerFrame.js`'s `TIPM`/`DTIPM` construction) were verified
+against real NAIF-distributed kernels and cross-checked against
+spiceypy loading the *same* files, not just synthetic fixtures -- see
+`crossval/pck00010.tpc`.
+
 ## Development
 
 ```sh
 npm test        # runs the test suite (node's built-in test runner)
 node examples/basic.mjs
 node examples/spk.mjs
+node examples/pck.mjs
 npm run crossval  # cross-validates str2et/spkez/spkezr against spiceypy (needs `pip install spiceypy`) -- see crossval/README.md
 ```
 
-`src/data/bodyIds.js` and `src/data/inertialFrames.js` are generated,
-not hand-written -- re-run their extractors against a local clone of
+`src/data/bodyIds.js`, `src/data/inertialFrames.js`, and
+`src/data/bodyFixedFrames.js` are generated, not hand-written --
+re-run their extractors against a local clone of
 [OpenSpace/Spice](https://github.com/OpenSpace/Spice) if NAIF's tables
 ever change:
 
 ```sh
-node scripts/extract-body-ids.mjs        <path-to-clone>/src/common/zzidmap.c
-node scripts/extract-inertial-frames.mjs <path-to-clone>/src/common/chgirf.c
+node scripts/extract-body-ids.mjs          <path-to-clone>/src/common/zzidmap.c
+node scripts/extract-inertial-frames.mjs   <path-to-clone>/src/common/chgirf.c
+node scripts/extract-body-fixed-frames.mjs <path-to-clone>/src/common/zzfdat.c
 ```
 
 ## Acknowledgements

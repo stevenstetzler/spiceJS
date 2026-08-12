@@ -353,7 +353,16 @@ test('spkez rejects an unrecognized ref frame name', () => {
   const pool = new KernelPool();
   const seg = linearMotionSegment({ type: 2, target: 499, center: 0 });
   pool.addSpkSegments(loadSpk(writeSpk({ segments: [seg] })));
-  assert.throws(() => spkez(499, 0, 0, 'NONE', 'IAU_MARS', pool), /body-fixed frames.*aren't supported yet/);
+  assert.throws(() => spkez(499, 0, 0, 'NONE', 'NOT_A_FRAME', pool), /not a recognized frame/);
+});
+
+test('spkez gives a clear error for a recognized body-fixed frame with no PCK data loaded', () => {
+  const pool = new KernelPool();
+  const seg = linearMotionSegment({ type: 2, target: 499, center: 0 });
+  pool.addSpkSegments(loadSpk(writeSpk({ segments: [seg] })));
+  // IAU_MARS is a real built-in frame name -- but no binary or text PCK
+  // orientation data for Mars has been loaded into this pool.
+  assert.throws(() => spkez(499, 0, 0, 'NONE', 'IAU_MARS', pool), /no BODY499_POLE_RA in the kernel pool/);
 });
 
 test('spkezr resolves body name strings and matches spkez with the equivalent IDs', () => {
@@ -369,4 +378,72 @@ test('spkezr resolves body name strings and matches spkez with the equivalent ID
 test('spkezr rejects an unrecognized body name', () => {
   const pool = new KernelPool();
   assert.throws(() => spkezr('NOT_A_BODY', '0', 0, 'NONE', null, pool), /unrecognized body name/);
+});
+
+// Regression: stellar aberration used to divide by the zero vector
+// (NaN) whenever the target's light-time-corrected position relative
+// to the observer was exactly zero -- caught by crossval, where a
+// body sitting exactly at its parent's synthetic position (Sun at
+// [0,0,0] relative to the SSB at et=0) produced a NaN state. Real
+// SPICE leaves a zero-length vector unrotated (there's no direction
+// to rotate it toward), so spiceJS should too.
+test('spkez with LT+S does not NaN when the target is exactly at the observer (zero relative position)', () => {
+  const pool = new KernelPool();
+  const sunSeg = linearMotionSegment({ type: 2, target: 10, center: 0, startEt: -2000, stopEt: 2000 });
+  sunSeg.records[0].coeffsByAxis = [
+    [0, 0],
+    [0, 0],
+    [0, 0],
+  ]; // Sun sits exactly at the SSB the whole time -- position is identically zero.
+  pool.addSpkSegments(loadSpk(writeSpk({ segments: [sunSeg] })));
+
+  const result = spkez(10, 0, 0, 'LT+S', null, pool);
+  assert.deepEqual(result.position, [0, 0, 0]);
+  assert.ok(result.velocity.every((v) => Number.isFinite(v)));
+
+  const rotated = spkez(10, 0, 0, 'LT+S', 'ECLIPJ2000', pool);
+  assert.deepEqual(rotated.position, [0, 0, 0]);
+  assert.ok(rotated.velocity.every((v) => Number.isFinite(v)));
+});
+
+// Regression: when `ref` is a non-inertial frame centered on neither
+// the target nor the observer, and `abcorr` requests light-time
+// correction, the frame's orientation is evaluated at an epoch that
+// itself depends on `et` (through a light-time solution to the
+// frame's center body -- see nonInertialFrameEpoch()'s doc comment).
+// Applying the frame's analytic rotation-derivative to an
+// already-central-differenced velocity misses that extra chain-rule
+// term; the returned velocity should still equal the derivative of
+// the returned position (checked here by an independent, much finer
+// central difference), which is what actually caught the bug via
+// crossval (spiceJS agreed with itself, but not with spiceypy).
+test('spkez velocity in a non-inertial ref frame equals the derivative of its own position, under LT+S', () => {
+  const pool = new KernelPool();
+  pool.addSpkSegments(
+    loadSpk(
+      writeSpk({
+        segments: [
+          linearMotionSegment({ type: 2, target: 301, center: 399, startEt: -2e6, stopEt: 2e6 }),
+          linearMotionSegment({ type: 2, target: 499, center: 0, startEt: -2e6, stopEt: 2e6 }), // frame's center body
+          linearMotionSegment({ type: 2, target: 399, center: 0, startEt: -2e6, stopEt: 2e6 }), // observer
+        ],
+      })
+    )
+  );
+  // A fast-spinning classic-formula body-fixed frame (IAU_MARS, body
+  // 499) -- distinct from both target (301) and observer (399), which
+  // is exactly the case that needs the frame-center light-time term.
+  pool.putValues('BODY499_POLE_RA', [317.269202, -0.10927547, 0]);
+  pool.putValues('BODY499_POLE_DEC', [54.432516, -0.05827105, 0]);
+  pool.putValues('BODY499_PM', [176.049863, 350.891982443297, 0]);
+
+  const et = 123456;
+  const result = spkez(301, 399, et, 'LT+S', 'IAU_MARS', pool);
+
+  const h = 1e-3; // much finer than VELOCITY_DERIVATIVE_STEP_S, an independent check
+  const plus = spkez(301, 399, et + h, 'LT+S', 'IAU_MARS', pool).position;
+  const minus = spkez(301, 399, et - h, 'LT+S', 'IAU_MARS', pool).position;
+  const finiteDiffVelocity = [0, 1, 2].map((i) => (plus[i] - minus[i]) / (2 * h));
+
+  result.velocity.forEach((v, i) => closeTo(v, finiteDiffVelocity[i], 1e-6));
 });

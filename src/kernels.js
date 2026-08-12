@@ -1,15 +1,17 @@
 /**
  * Kernel loading: SPICE's FURNSH / UNLOAD / KCLEAR, for text kernels
- * (LSK, FK, IK, SCLK), meta-kernels (MK), and binary SPK (trajectory)
- * kernels. Other binary kernels (PCK, CK) and DAS-based kernels (DSK)
- * are detected and rejected with a clear "not supported yet" error
- * rather than silently misbehaving.
+ * (LSK, FK, IK, SCLK), meta-kernels (MK), binary SPK (trajectory)
+ * kernels, and binary PCK (body orientation) kernels. Other binary
+ * kernels (CK) and DAS-based kernels (DSK) are detected and rejected
+ * with a clear "not supported yet" error rather than silently
+ * misbehaving.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { globalPool, KernelPool } from './pool.js';
 import { loadTextKernel } from './textKernel.js';
 import { loadSpk } from './spk.js';
+import { loadPck } from './pck.js';
 
 // Per-pool record of what furnsh() loaded from each file, so unload()
 // can undo it. Keyed by pool identity so isolated pools (e.g. in
@@ -96,16 +98,23 @@ export function furnsh(filePath, pool = globalPool) {
     return;
   }
 
+  if (magic.startsWith('DAF/PCK')) {
+    const segments = loadPck(buffer);
+    pool.addPckSegments(segments);
+    registryFor(pool).set(absPath, { type: 'pck', segments });
+    return;
+  }
+
   if (magic.startsWith('DAF/') || magic.startsWith('NAIF/DAF')) {
     throw new Error(
-      `furnsh: "${filePath}" is a binary SPICE kernel (${magic.trim()}). Only binary SPK kernels are ` +
-        'supported so far -- other binary kernels (PCK, CK, ...) are not.'
+      `furnsh: "${filePath}" is a binary SPICE kernel (${magic.trim()}). Only binary SPK and PCK kernels ` +
+        'are supported so far -- other binary kernels (CK, ...) are not.'
     );
   }
 
   throw new Error(
     `furnsh: "${filePath}" does not look like a recognized SPICE kernel (expected a text kernel ` +
-      'starting with "KPL/", or a binary SPK kernel starting with "DAF/SPK").'
+      'starting with "KPL/", or a binary SPK/PCK kernel starting with "DAF/SPK"/"DAF/PCK").'
   );
 }
 
@@ -134,6 +143,8 @@ export function unload(filePath, pool = globalPool) {
     }
   } else if (entry.type === 'spk') {
     pool.removeSpkSegments(entry.segments);
+  } else if (entry.type === 'pck') {
+    pool.removePckSegments(entry.segments);
   }
   // 'meta' entries have nothing of their own to undo.
 

@@ -4,7 +4,10 @@
 ground truth we can check spiceJS against without network access to
 naif.jpl.nasa.gov. This directory cross-checks `str2et()`, `spkez()`,
 and `spkezr()` against it, case by case, on a synthetic kernel both
-sides load identically.
+sides load identically, plus `crossval/pck00010.tpc` -- NAIF's own
+publicly distributed generic text PCK, used (unmodified) to exercise
+the classic body-fixed orientation formula (`src/bodyOrientation.js`)
+against real constants, not just synthetic ones.
 
 ## Prerequisites
 
@@ -29,15 +32,24 @@ exist.
 This is **not** part of `npm test` -- it requires Python and
 `spiceypy` installed, which the main test suite deliberately doesn't
 depend on. Run it after any change to `src/time/`, `src/spk.js`,
-`src/daf.js`, `src/bodies.js`, `src/frames.js`, `src/data/*.js`, or the
-underlying byte-format understanding in `test/helpers/writeSpk.js`.
+`src/pck.js`, `src/daf.js`, `src/bodies.js`, `src/frames.js`,
+`src/bodyOrientation.js`, `src/math/eulerFrame.js`, `src/data/*.js`, or
+the underlying byte-format understanding in
+`test/helpers/writeSpk.js`/`test/helpers/writePck.js`.
 
 ## Notes on what this does and doesn't cover
 
 - `ref` is exercised against several of the 21 built-in inertial
-  frames (`J2000`, `ECLIPJ2000`, `B1950`, `GALACTIC`, `FK4`); body-fixed
-  frames (`IAU_MARS`, ...) aren't covered since spiceJS doesn't
-  implement them yet.
+  frames (`J2000`, `ECLIPJ2000`, `B1950`, `GALACTIC`, `FK4`) and several
+  of the built-in body-fixed frames (`IAU_MARS`, `IAU_EARTH`,
+  `IAU_MOON`, `IAU_SUN`, driven by the classic formula reading
+  `crossval/pck00010.tpc`). FK-defined (frame-kernel) frames and
+  binary-PCK-driven orientation aren't covered here -- those were
+  instead validated manually against real NAIF-distributed kernels
+  (a lunar frame kernel + binary PCK) and spiceypy loading the *same*
+  files, cross-checking full 6x6 state transforms (`sxform`), not just
+  `spkez`; see the body-fixed-frames round's commit message for the
+  specific numbers.
 - `spkezr` cases use a mix of real NAIF body-name aliases (case,
   underscore vs. space, plain-integer) for the bodies the synthetic
   kernel has segments for, so name resolution (`src/bodies.js`) is
@@ -47,4 +59,17 @@ underlying byte-format understanding in `test/helpers/writeSpk.js`.
   the hard way (cross-validating against a real kernel is exactly how
   that bug surfaced: spiceypy rejected a short-padded file deep in
   `SPKR02`/`DAFGDA` with a confusing "beginning address > ending
-  address" error).
+  address" error). `test/helpers/writePck.js` follows the same layout.
+- `compare.mjs` compares position/velocity components against a
+  tolerance relative to the *whole vector's* magnitude, not each
+  component's own -- rotating a large vector (e.g. ~1e9 km) into a
+  frame where one output component happens to land near zero is
+  catastrophic cancellation, not imprecision, and comparing that
+  component against its own tiny magnitude would flag ordinary
+  float64 rounding noise as a mismatch. This is also how two real
+  bugs were found and fixed in this round: `spkez()`'s stellar
+  aberration divided by zero for a target sitting exactly at the
+  observer's position, and a non-inertial `ref` frame centered on
+  neither the target nor the observer needs its orientation evaluated
+  at a light-time-adjusted epoch (NAIF's `spkez.c`) that itself varies
+  with `et`, which the original fixed-epoch analytic rotation missed.

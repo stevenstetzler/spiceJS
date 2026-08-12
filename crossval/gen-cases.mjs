@@ -94,6 +94,20 @@ for (const et of ets) {
   }
 }
 
+// ref: the built-in body-fixed (IAU_*) frames, driven by the classic
+// text-PCK orientation formula in crossval/pck00010.tpc (both sides
+// furnsh this same real NAIF-distributed kernel -- see run-js.mjs/
+// run-py.py) -- proves bodyOrientation.js's RA/DEC/W polynomial +
+// periodic-term formula and frames.js's TIPM/DTIPM construction, not
+// just the fixed-matrix inertial frames above.
+const bodyFixedRefFrames = ['IAU_MARS', 'IAU_EARTH', 'IAU_MOON', 'IAU_SUN'];
+for (const et of ets) {
+  for (const ref of bodyFixedRefFrames) {
+    spkezCases.push({ target: 499, center: 10, et, abcorr: 'NONE', ref });
+    spkezCases.push({ target: 301, center: 399, et, abcorr: 'LT+S', ref });
+  }
+}
+
 // spkezr: body name strings (a mix of aliases -- case, underscore vs.
 // space, plain-integer -- for the bodies the synthetic kernel above
 // actually has segments for), cross-checked against spiceypy's own

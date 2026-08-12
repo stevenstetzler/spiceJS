@@ -11,6 +11,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURES = os.path.join(HERE, "fixtures")
 
 spice.furnsh(os.path.join(HERE, "..", "kernels", "naif0012.tls"))
+spice.furnsh(os.path.join(HERE, "pck00010.tpc"))
 spice.furnsh(os.path.join(FIXTURES, "kernel.bsp"))
 
 with open(os.path.join(FIXTURES, "cases.json")) as f:
