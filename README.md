@@ -26,7 +26,9 @@ Supported today:
 - `et2utc()` / `et2utcCalendar()` as a basic inverse, mostly useful
   for testing.
 - Loading **binary SPK** (trajectory) kernels and reading the
-  position/velocity they contain (`spkState()`) -- see below.
+  position/velocity they contain -- a direct, single-segment lookup
+  (`spkState()`), and a chained, aberration-corrected query across
+  arbitrary target/observer pairs (`spkez()`) -- see below.
 
 Not yet supported (all fail with a clear error, not a silent wrong
 answer):
@@ -37,11 +39,13 @@ answer):
   majority of publicly distributed planetary/lunar kernels, but not
   e.g. spacecraft kernels using Lagrange/Hermite interpolation (types
   5, 8/9/12/13).
-- Looking up a target/observer pair that isn't *exactly* one loaded
-  segment (SPICE's `spkezr_c`/`spkgeo_c` search across intermediate
-  bodies -- e.g. Mars relative to Earth via the barycenter -- spiceJS
-  doesn't chain segments together yet) or that needs a frame transform
-  (positions come back in the segment's native frame, unconverted).
+- Body **name** strings (`spkezr_c` takes `"EARTH"`; `spkez()` here
+  takes the NAIF integer ID `399`) -- needs sourcing NAIF's ~563-entry
+  built-in name table, a separate follow-up.
+- Frame transforms -- `spkez()`/`spkState()` return positions in
+  whatever frame the involved segments natively use (mixed frames
+  along a chain, or between target and observer, is a clear error
+  rather than a silent wrong answer), not an arbitrary requested frame.
 - Spacecraft clock (SCLK) strings and general time zones beyond the
   handful `str2et_c` itself documents (the U.S. zones, and `UTC±H:MM`).
 - UTC epochs before 1972-JAN-1 (where the leapseconds table starts).
@@ -174,24 +178,52 @@ const { position, velocity } = spkState(499, 0, someEt);
 
 `spkState(target, center, et, pool?)` is a **direct** lookup: it needs
 a loaded segment whose `(target, center)` match exactly (use
-`spkSegments()` to see what's available) -- it does not search across
-intermediate bodies the way `spkezr_c`/`spkgeo_c` do. For most generic
-planetary kernels this covers the common cases directly (e.g. any
-planet relative to the SSB, the Moon relative to the Earth-Moon
-barycenter); a body relative to an arbitrary third body may need an
-intermediate step of your own for now.
+`spkSegments()` to see what's available). For most generic planetary
+kernels this covers the common cases directly (e.g. any planet
+relative to the SSB, the Moon relative to the Earth-Moon barycenter).
+
+For an arbitrary target/observer pair, use `spkez()` -- it's SPICE's
+`spkez_c`: it chains through intermediate bodies back to the Solar
+System Barycenter (the same way NAIF's own `spkgeo_c`/`spkssb_` do)
+and applies light-time and/or stellar aberration correction:
+
+```js
+import { spkez } from './src/index.js';
+
+// Earth (399) relative to the SSB (0) -- even though a typical DE
+// kernel only stores Earth relative to the Earth-Moon barycenter (3)
+// and the EMB relative to the SSB, spkez() connects the two hops.
+const { position, velocity, lightTime } = spkez(399, 0, someEt);
+//=> geometric state (no correction) -- the default, same as spkState()
+
+spkez(399, 0, someEt, 'LT+S');
+//=> light-time + stellar-aberration corrected apparent state, as an
+//   observer sitting at the SSB would actually see it
+```
+
+`abcorr` accepts the same 9 values as `spkez_c`: `'NONE'` (default),
+`'LT'`/`'LT+S'` (one-iteration light time, "reception" case, optionally
+with stellar aberration), `'CN'`/`'CN+S'` (3-iteration converged light
+time), and the `'X...'`-prefixed "transmission" case equivalents of
+each. See the doc comment on `spkez()` in `src/spk.js` for what each
+means. What it does *not* do: resolve body name strings (`spkezr_c`'s
+job, not implemented -- pass NAIF integer IDs) or rotate into a
+requested frame (also not implemented -- a mismatched frame anywhere
+along the chain, or between target and observer, is a clear error).
 
 The binary format itself (`src/daf.js` for the generic DAF container,
-`src/spk.js` for SPK's segment layout and Chebyshev evaluation) was
-derived directly from NAIF's own source (`zzdafnfr.c`, `dafps.c`,
-`spkr02.c`/`spke02.c`, `spkr03.c`/`spke03.c` in the
-[OpenSpace/Spice](https://github.com/OpenSpace/Spice) mirror), not
-guessed at -- see the doc comments in those two files for the byte
-layout. Because a real `.bsp` is tens-to-hundreds of megabytes and
-`naif.jpl.nasa.gov` isn't reachable from every environment, the test
-suite validates this against a synthetic SPK file it builds itself
-(`test/helpers/writeSpk.js`) encoding an exactly-checkable linear
-trajectory, rather than a bundled real kernel.
+`src/spk.js` for SPK's segment layout, Chebyshev evaluation, chaining,
+and aberration correction) was derived directly from NAIF's own source
+(`zzdafnfr.c`, `dafps.c`, `spkr02.c`/`spke02.c`, `spkr03.c`/`spke03.c`,
+`spkgeo.c`, `spkssb.c`, `spkapp.c`, `stelab.c`, `stlabx.c`, `vrotv.c`,
+`clight.c` in the [OpenSpace/Spice](https://github.com/OpenSpace/Spice)
+mirror), not guessed at -- see the doc comments in those files for the
+byte layout and the algorithms. Because a real `.bsp` is
+tens-to-hundreds of megabytes and `naif.jpl.nasa.gov` isn't reachable
+from every environment, the test suite validates this against
+synthetic SPK files it builds itself (`test/helpers/writeSpk.js`)
+encoding exactly-checkable linear trajectories, rather than a bundled
+real kernel.
 
 ## Development
 

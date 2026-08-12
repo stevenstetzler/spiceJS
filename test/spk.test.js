@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadSpk, evaluateSegment, findSegment, spkState, spkSegments } from '../src/spk.js';
+import { loadSpk, evaluateSegment, findSegment, spkState, spkSegments, spkez } from '../src/spk.js';
+
+const CLIGHT_KM_S = 299792.458; // exact, by SI definition -- independently re-stated here, not imported
 import { KernelPool } from '../src/pool.js';
 import { writeSpk } from './helpers/writeSpk.js';
 
@@ -136,4 +138,179 @@ test('spkSegments lists loaded segments without internal buffer state', () => {
   const listed = spkSegments(pool);
   assert.equal(listed.length, 1);
   assert.deepEqual(listed[0], { target: 499, center: 10, frame: 1, type: 2, startEt: -1000, stopEt: 1000 });
+});
+
+// --- spkez: chaining and aberration correction ---
+
+test('spkez chains through an intermediate body to reach the SSB', () => {
+  const pool = new KernelPool();
+  const segAB = linearMotionSegment({ type: 2, target: 499, center: 3 }); // A rel. B
+  const segB0 = linearMotionSegment({ type: 2, target: 3, center: 0 }); // B rel. SSB
+  pool.addSpkSegments(loadSpk(writeSpk({ segments: [segAB] })));
+  pool.addSpkSegments(loadSpk(writeSpk({ segments: [segB0] })));
+
+  const et = 250;
+  const direct = segAB.expectedStateAt(et); // A rel. B
+  const viaB = segB0.expectedStateAt(et); // B rel. SSB
+
+  const toSsb = spkez(499, 0, et, 'NONE', pool);
+  [0, 1, 2].forEach((i) => closeTo(toSsb.position[i], direct.position[i] + viaB.position[i]));
+  [0, 1, 2].forEach((i) => closeTo(toSsb.velocity[i], direct.velocity[i] + viaB.velocity[i]));
+
+  // B's own SSB-relative term cancels out of "A relative to B" algebraically,
+  // so this must equal segAB's direct state exactly, not just up to a chain.
+  const relB = spkez(499, 3, et, 'NONE', pool);
+  [0, 1, 2].forEach((i) => closeTo(relB.position[i], direct.position[i]));
+  [0, 1, 2].forEach((i) => closeTo(relB.velocity[i], direct.velocity[i]));
+});
+
+test('spkez: target and observer the same body gives exactly zero state', () => {
+  const pool = new KernelPool();
+  const seg = linearMotionSegment({ type: 2, target: 499, center: 0 });
+  pool.addSpkSegments(loadSpk(writeSpk({ segments: [seg] })));
+
+  const { position, velocity, lightTime } = spkez(499, 499, 0, 'NONE', pool);
+  assert.deepEqual(position, [0, 0, 0]);
+  assert.deepEqual(velocity, [0, 0, 0]);
+  assert.equal(lightTime, 0);
+});
+
+test('"LT" shifts the target position by its own motion over the light time, isolated from stellar aberration', () => {
+  const pool = new KernelPool();
+  const D = 1.5e8; // km
+  const Vy = 20; // km/s, perpendicular to the line of sight
+
+  const stationaryObserver = (target) => ({
+    target,
+    center: 0,
+    frame: 1,
+    type: 2,
+    startEt: -1e6,
+    stopEt: 1e6,
+    init: -1e6,
+    intlen: 2e6,
+    records: [{ mid: 0, radius: 1e6, coeffsByAxis: [[0, 0], [0, 0], [0, 0]] }],
+  });
+  const movingTarget = {
+    target: 499,
+    center: 0,
+    frame: 1,
+    type: 2,
+    startEt: -1e6,
+    stopEt: 1e6,
+    init: -1e6,
+    intlen: 2e6,
+    records: [{ mid: 0, radius: 1e6, coeffsByAxis: [[D, 0], [0, Vy * 1e6], [0, 0]] }],
+  };
+  pool.addSpkSegments(loadSpk(writeSpk({ segments: [stationaryObserver(399)] })));
+  pool.addSpkSegments(loadSpk(writeSpk({ segments: [movingTarget] })));
+
+  const none = spkez(499, 399, 0, 'NONE', pool);
+  closeTo(none.position[0], D);
+  closeTo(none.position[1], 0);
+  closeTo(none.lightTime, D / CLIGHT_KM_S, 1e-9); // exact: position is exactly [D,0,0] here
+
+  // 'LT' does exactly one iteration, seeded by the geometric light time
+  // D/c, and the target's X position/velocity never change (it only moves
+  // in Y), so the light-time-shifted position is hand-computable in closed
+  // form. lightTime itself picks up a tiny second-order (Vy*lt/c)^2 term
+  // from the resulting Y offset, hence the looser tolerance there only.
+  const geometricLt = D / CLIGHT_KM_S;
+  const lt = spkez(499, 399, 0, 'LT', pool);
+  closeTo(lt.position[0], D, 1e-3);
+  closeTo(lt.position[1], -Vy * geometricLt, 1e-3);
+  closeTo(lt.velocity[1], Vy);
+  closeTo(lt.lightTime, geometricLt, 1e-4);
+
+  // Zero observer velocity makes stellar aberration an algebraic no-op.
+  const ltPlusS = spkez(499, 399, 0, 'LT+S', pool);
+  assert.deepEqual(ltPlusS.position, lt.position);
+});
+
+test('"LT+S" stellar aberration matches the hand-derived rotation for perpendicular geometry', () => {
+  const pool = new KernelPool();
+  const D = 1e8; // km
+  const Vy = 30; // km/s, observer's own velocity, perpendicular to the line of sight
+
+  const stationaryTarget = {
+    target: 499,
+    center: 0,
+    frame: 1,
+    type: 2,
+    startEt: -1e6,
+    stopEt: 1e6,
+    init: -1e6,
+    intlen: 2e6,
+    records: [{ mid: 0, radius: 1e6, coeffsByAxis: [[D, 0], [0, 0], [0, 0]] }],
+  };
+  const movingObserverAtOrigin = {
+    target: 399,
+    center: 0,
+    frame: 1,
+    type: 2,
+    startEt: -1e6,
+    stopEt: 1e6,
+    init: -1e6,
+    intlen: 2e6,
+    records: [{ mid: 0, radius: 1e6, coeffsByAxis: [[0, 0], [0, Vy * 1e6], [0, 0]] }],
+  };
+  pool.addSpkSegments(loadSpk(writeSpk({ segments: [stationaryTarget] })));
+  pool.addSpkSegments(loadSpk(writeSpk({ segments: [movingObserverAtOrigin] })));
+
+  const { position } = spkez(499, 399, 0, 'LT+S', pool);
+
+  // Independent hand-derivation (basic trig, not the implementation's own
+  // rotation formula): the target is stationary, so light-time correction
+  // is a no-op on its position; stellar aberration then rotates [D,0,0]
+  // toward the observer's velocity direction (+Y) by phi = asin(Vy/c).
+  const phi = Math.asin(Vy / CLIGHT_KM_S);
+  closeTo(position[0], D * Math.cos(phi), 1e-3);
+  closeTo(position[1], D * Math.sin(phi), 1e-3);
+  closeTo(position[2], 0, 1e-9);
+});
+
+test('spkez rejects an unrecognized aberration correction', () => {
+  const pool = new KernelPool();
+  assert.throws(() => spkez(1, 0, 0, 'BOGUS', pool), /unrecognized aberration correction/);
+});
+
+test('spkez throws a helpful error when a chain never reaches the SSB', () => {
+  const pool = new KernelPool();
+  assert.throws(() => spkez(5, 0, 0, 'NONE', pool), /no path back to the Solar System Barycenter/);
+});
+
+test('spkez detects a circular center chain', () => {
+  const pool = new KernelPool();
+  const zeroMotion = (target, center) => ({
+    target,
+    center,
+    frame: 1,
+    type: 2,
+    startEt: -100,
+    stopEt: 100,
+    init: -100,
+    intlen: 200,
+    records: [{ mid: 0, radius: 100, coeffsByAxis: [[0, 0], [0, 0], [0, 0]] }],
+  });
+  pool.addSpkSegments(loadSpk(writeSpk({ segments: [zeroMotion(1, 2)] })));
+  pool.addSpkSegments(loadSpk(writeSpk({ segments: [zeroMotion(2, 1)] })));
+  assert.throws(() => spkez(1, 0, 0, 'NONE', pool), /circular SPK center chain/);
+});
+
+test('spkez rejects a chain with mixed reference frames', () => {
+  const pool = new KernelPool();
+  const zeroMotion = (target, frame) => ({
+    target,
+    center: 0,
+    frame,
+    type: 2,
+    startEt: -100,
+    stopEt: 100,
+    init: -100,
+    intlen: 200,
+    records: [{ mid: 0, radius: 100, coeffsByAxis: [[0, 0], [0, 0], [0, 0]] }],
+  });
+  pool.addSpkSegments(loadSpk(writeSpk({ segments: [zeroMotion(1, 1)] })));
+  pool.addSpkSegments(loadSpk(writeSpk({ segments: [zeroMotion(2, 17)] })));
+  assert.throws(() => spkez(1, 2, 0, 'NONE', pool), /frame transforms are not supported yet/);
 });

@@ -9,7 +9,8 @@
 // To use a real kernel instead, skip the synthetic-file step below
 // and just call:
 //   furnsh('/path/to/de440s.bsp');
-//   spkState(499, 0, someEt);   // e.g. Mars (499) relative to the SSB (0)
+//   spkState(499, 10, someEt);              // Mars, direct segment only
+//   spkez(399, 0, someEt, 'LT+S');           // Earth rel. SSB, chained + corrected
 //
 // Run from the repo root with:
 //   node examples/spk.mjs
@@ -17,12 +18,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { furnsh, spkState, spkSegments } from '../src/index.js';
+import { furnsh, spkState, spkez, spkSegments } from '../src/index.js';
 import { writeSpk } from '../test/helpers/writeSpk.js';
 
-// A body (arbitrary ID 499, "Mars") moving in a straight line at
-// 1 km/s in X relative to its center (ID 10, "the Sun"), for the
-// hour around J2000 (ET seconds past J2000: -1800 to 1800).
+// Two segments, the way a real DE-series kernel is laid out: Mars
+// (499) moving in a straight line at 1 km/s in X relative to the Sun
+// (10), and the Sun itself moving relative to the SSB (0) -- so
+// "Mars relative to the SSB" needs the two-hop chain spkez() does.
 const buffer = writeSpk({
   segments: [
     {
@@ -36,6 +38,17 @@ const buffer = writeSpk({
       intlen: 3600,
       records: [{ mid: 0, radius: 1800, coeffsByAxis: [[1.0e8, 1800], [2.0e8, 0], [0, 0]] }],
     },
+    {
+      target: 10,
+      center: 0,
+      frame: 1,
+      type: 2,
+      startEt: -1800,
+      stopEt: 1800,
+      init: -1800,
+      intlen: 3600,
+      records: [{ mid: 0, radius: 1800, coeffsByAxis: [[500, 0], [-300, 0], [0, 0]] }],
+    },
   ],
 });
 
@@ -47,9 +60,18 @@ try {
 
   console.log('Loaded segments:', spkSegments());
 
-  const { position, velocity } = spkState(499, 10, 0);
-  console.log('Position (km):', position);
-  console.log('Velocity (km/s):', velocity);
+  // Direct lookup: only works because (499, 10) is exactly one loaded segment.
+  const direct = spkState(499, 10, 0);
+  console.log('Mars rel. Sun (direct):', direct);
+
+  // spkez() chains Mars -> Sun -> SSB automatically.
+  const geometric = spkez(499, 0, 0, 'NONE');
+  console.log('Mars rel. SSB (geometric):', geometric);
+
+  // Same query, now with light-time + stellar aberration correction --
+  // the apparent position/velocity an observer at the SSB would see.
+  const corrected = spkez(499, 0, 0, 'LT+S');
+  console.log('Mars rel. SSB (LT+S):', corrected);
 } finally {
   fs.unlinkSync(tempFile);
 }

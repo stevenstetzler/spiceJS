@@ -34,11 +34,16 @@
  */
 import { parseDaf, readWords } from './daf.js';
 import { evaluate, evaluateWithDerivative } from './math/chebyshev.js';
+import { add, sub, scale, cross, norm, unit, rotateAboutAxis } from './math/vector3.js';
 import { globalPool } from './pool.js';
 
 const SPK_ND = 2;
 const SPK_NI = 6;
 const SUPPORTED_TYPES = new Set([2, 3]);
+
+const CLIGHT_KM_S = 299792.458; // exact, by SI definition of the meter
+const MAX_CHAIN_HOPS = 20; // matches NAIF's own CHLEN (spkgeo.f)
+const SSB = 0;
 
 /**
  * Decode an SPK file's segments from its raw bytes. Each returned
@@ -211,4 +216,177 @@ export function spkSegments(pool = globalPool) {
     startEt,
     stopEt,
   }));
+}
+
+/**
+ * Among a body's loaded segments, the one covering `et` -- preferring
+ * the *last-loaded* match, matching SPICE's own "most recently
+ * furnsh'd kernel has priority" convention for overlapping data.
+ */
+function pickSegmentForBody(pool, bodyId, et) {
+  const candidates = pool.getSpkSegments(bodyId).filter((segment) => et >= segment.startEt && et <= segment.stopEt);
+  return candidates.length ? candidates[candidates.length - 1] : null;
+}
+
+/**
+ * State of `bodyId` relative to the Solar System Barycenter (body 0)
+ * at `et`: walk `.center` links, summing each hop's state, until
+ * reaching body 0. This is what NAIF's spkssb_ does (it's literally
+ * spkgeo_ with the observer fixed at body 0), and is the building
+ * block spkez() below chains target and observer through.
+ *
+ * @returns {{ position: number[], velocity: number[], frame: number|null }}
+ *   `frame` is `null` when `bodyId` is 0 itself (a trivial zero state,
+ *   compatible with any frame).
+ */
+function chainStateToSsb(pool, bodyId, et) {
+  let position = [0, 0, 0];
+  let velocity = [0, 0, 0];
+  let frame = null;
+  let current = bodyId;
+  const visited = new Set();
+
+  while (current !== SSB) {
+    if (visited.has(current)) {
+      throw new Error(`spkez: circular SPK center chain detected -- body ${current} is its own ancestor`);
+    }
+    if (visited.size >= MAX_CHAIN_HOPS) {
+      throw new Error(
+        `spkez: center chain for body ${bodyId} did not reach the Solar System Barycenter (body 0) ` +
+          `within ${MAX_CHAIN_HOPS} hops`
+      );
+    }
+    visited.add(current);
+
+    const segment = pickSegmentForBody(pool, current, et);
+    if (!segment) {
+      throw new Error(
+        `spkez: no path back to the Solar System Barycenter (body 0) for body ${bodyId} at ET=${et} -- ` +
+          `stuck at body ${current}, which has no loaded SPK segment covering this time. Loaded (target, ` +
+          `center) pairs: ${spkSegments(pool)
+            .map((s) => `(${s.target}, ${s.center})`)
+            .join(', ') || 'none'}.`
+      );
+    }
+    if (frame !== null && segment.frame !== frame) {
+      throw new Error(
+        `spkez: mixed reference frames along body ${bodyId}'s center chain (frame ${frame} vs ` +
+          `${segment.frame} at body ${current}) -- frame transforms are not supported yet`
+      );
+    }
+    frame = segment.frame;
+
+    const state = evaluateSegment(segment, et);
+    position = add(position, state.position);
+    velocity = add(velocity, state.velocity);
+    current = segment.center;
+  }
+
+  return { position, velocity, frame };
+}
+
+function assertCompatibleFrames(a, b, target, observer) {
+  if (a !== null && b !== null && a !== b) {
+    throw new Error(
+      `spkez: target ${target}'s chain uses frame ${a} but observer ${observer}'s chain uses frame ${b} ` +
+        '-- frame transforms are not supported yet, so target and observer must resolve through the same frame'
+    );
+  }
+}
+
+function relativeState(pool, target, observer, observerState, et) {
+  const targetState = chainStateToSsb(pool, target, et);
+  assertCompatibleFrames(targetState.frame, observerState.frame, target, observer);
+  return {
+    position: sub(targetState.position, observerState.position),
+    velocity: sub(targetState.velocity, observerState.velocity),
+  };
+}
+
+// Mirrors spkapp_'s exact correction table: iteration count and
+// direction ("reception" vs "transmission"), and whether stellar
+// aberration is applied.
+const ABCORR = {
+  NONE: { maxIter: 0, stellar: false, xmit: false },
+  LT: { maxIter: 1, stellar: false, xmit: false },
+  'LT+S': { maxIter: 1, stellar: true, xmit: false },
+  CN: { maxIter: 3, stellar: false, xmit: false },
+  'CN+S': { maxIter: 3, stellar: true, xmit: false },
+  XLT: { maxIter: 1, stellar: false, xmit: true },
+  'XLT+S': { maxIter: 1, stellar: true, xmit: true },
+  XCN: { maxIter: 3, stellar: false, xmit: true },
+  'XCN+S': { maxIter: 3, stellar: true, xmit: true },
+};
+
+/**
+ * Reception-case stellar aberration (NAIF's stelab_): correct
+ * `position` (the vector from observer to target) for the observer's
+ * velocity `vobs` relative to the SSB. The transmission case is this
+ * same correction applied to `-vobs` (NAIF's stlabx_).
+ */
+function stellarAberration(position, vobs) {
+  const vbyc = scale(vobs, 1 / CLIGHT_KM_S);
+  if (vbyc[0] * vbyc[0] + vbyc[1] * vbyc[1] + vbyc[2] * vbyc[2] >= 1) {
+    throw new Error('spkez: observer speed is >= the speed of light -- cannot apply stellar aberration');
+  }
+  const h = cross(unit(position), vbyc);
+  const sinPhi = norm(h);
+  if (sinPhi === 0) return position.slice();
+  return rotateAboutAxis(position, h, Math.asin(sinPhi));
+}
+
+/**
+ * `target`'s state relative to `observer` at `et`, following center
+ * chains back to the Solar System Barycenter to connect bodies that
+ * aren't directly related by one loaded segment (e.g. Earth relative
+ * to the SSB, when the kernel only stores Earth relative to the
+ * Earth-Moon barycenter and the EMB relative to the SSB) -- unlike
+ * spkState(), which only looks up a single, direct segment. This is
+ * SPICE's spkez_c: `target`/`observer` are NAIF integer IDs (not the
+ * body name strings spkezr_c takes), and the result is in whatever
+ * frame the involved segments natively use (not the arbitrary frame
+ * spkez_c/spkezr_c let you request -- frame rotation isn't
+ * implemented yet, so mismatched frames along the way are a clear
+ * error rather than a wrong answer).
+ *
+ * @param {number} target
+ * @param {number} observer
+ * @param {number} et - ephemeris time, TDB seconds past J2000
+ * @param {string} [abcorr] - one of 'NONE' (default), 'LT', 'LT+S',
+ *   'CN', 'CN+S', 'XLT', 'XLT+S', 'XCN', 'XCN+S' (case/whitespace
+ *   insensitive) -- see NAIF's spkez_c documentation for what each
+ *   means; briefly, LT/CN are light-time (one-iteration vs.
+ *   converged) correction for the "reception" case, X-prefixed are
+ *   the "transmission" case, and +S additionally applies stellar
+ *   aberration.
+ * @param {import('./pool.js').KernelPool} [pool]
+ * @returns {{ position: number[], velocity: number[], lightTime: number }}
+ */
+export function spkez(target, observer, et, abcorr = 'NONE', pool = globalPool) {
+  const key = String(abcorr).toUpperCase().replace(/\s+/g, '');
+  const correction = ABCORR[key];
+  if (!correction) {
+    throw new Error(
+      `spkez: unrecognized aberration correction "${abcorr}" (expected one of ${Object.keys(ABCORR).join(', ')})`
+    );
+  }
+
+  const observerState = chainStateToSsb(pool, observer, et);
+  const ltSign = correction.xmit ? 1 : -1;
+
+  let relative = relativeState(pool, target, observer, observerState, et);
+  let lightTime = norm(relative.position) / CLIGHT_KM_S;
+
+  for (let i = 0; i < correction.maxIter; i++) {
+    relative = relativeState(pool, target, observer, observerState, et + ltSign * lightTime);
+    lightTime = norm(relative.position) / CLIGHT_KM_S;
+  }
+
+  let position = relative.position;
+  if (correction.stellar) {
+    const obsVelocity = correction.xmit ? scale(observerState.velocity, -1) : observerState.velocity;
+    position = stellarAberration(position, obsVelocity);
+  }
+
+  return { position, velocity: relative.velocity, lightTime };
 }
