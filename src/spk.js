@@ -36,6 +36,8 @@ import { parseDaf, readWords } from './daf.js';
 import { evaluate, evaluateWithDerivative } from './math/chebyshev.js';
 import { add, sub, scale, cross, norm, unit, rotateAboutAxis } from './math/vector3.js';
 import { globalPool } from './pool.js';
+import { frameId as resolveFrameId, rotateState } from './frames.js';
+import { bodyCode } from './bodies.js';
 
 const SPK_ND = 2;
 const SPK_NI = 6;
@@ -300,6 +302,7 @@ function relativeState(pool, target, observer, observerState, et) {
   return {
     position: sub(targetState.position, observerState.position),
     velocity: sub(targetState.velocity, observerState.velocity),
+    frame: targetState.frame ?? observerState.frame,
   };
 }
 
@@ -373,11 +376,7 @@ function stellarAberration(position, vobs) {
  * Earth-Moon barycenter and the EMB relative to the SSB) -- unlike
  * spkState(), which only looks up a single, direct segment. This is
  * SPICE's spkez_c: `target`/`observer` are NAIF integer IDs (not the
- * body name strings spkezr_c takes), and the result is in whatever
- * frame the involved segments natively use (not the arbitrary frame
- * spkez_c/spkezr_c let you request -- frame rotation isn't
- * implemented yet, so mismatched frames along the way are a clear
- * error rather than a wrong answer).
+ * body name strings spkezr_c takes -- see spkezr() below for that).
  *
  * @param {number} target
  * @param {number} observer
@@ -389,6 +388,14 @@ function stellarAberration(position, vobs) {
  *   converged) correction for the "reception" case, X-prefixed are
  *   the "transmission" case, and +S additionally applies stellar
  *   aberration.
+ * @param {string} [ref] - name of one of the 21 built-in inertial
+ *   frames (e.g. 'J2000', 'ECLIPJ2000', 'B1950', 'GALACTIC' -- see
+ *   frames.js) to express the result in. Omit (the default) to get
+ *   the result in whatever frame the involved segments natively use,
+ *   unrotated. Body-fixed frames (IAU_MARS, ...) aren't supported
+ *   yet. If the segments along the way don't all natively agree on
+ *   one frame, that's a clear error regardless of `ref` -- there's no
+ *   rotation to reconcile them without knowing which one you want.
  * @param {import('./pool.js').KernelPool} [pool]
  * @returns {{ position: number[], velocity: number[], lightTime: number }}
  *
@@ -409,7 +416,7 @@ function stellarAberration(position, vobs) {
  * precision. `NONE` needs no correction, so it skips this entirely
  * and uses the exact analytic velocity from the segment data.
  */
-export function spkez(target, observer, et, abcorr = 'NONE', pool = globalPool) {
+export function spkez(target, observer, et, abcorr = 'NONE', ref = null, pool = globalPool) {
   const key = String(abcorr).toUpperCase().replace(/\s+/g, '');
   const correction = ABCORR[key];
   if (!correction) {
@@ -436,5 +443,36 @@ export function spkez(target, observer, et, abcorr = 'NONE', pool = globalPool) 
     velocity = scale(sub(plus, minus), 1 / (2 * h));
   }
 
+  if (ref !== null && relative.frame !== null) {
+    // Rotation is a fixed (time-independent) linear map for these
+    // inertial frames, so it commutes with the central-difference
+    // velocity above: rotating the already-computed position and
+    // velocity is exactly equivalent to (and simpler than) rotating
+    // inside the differentiated function.
+    const targetFrameId = resolveFrameId(ref);
+    ({ position, velocity } = rotateState(relative.frame, targetFrameId, position, velocity));
+  }
+
   return { position, velocity, lightTime };
+}
+
+/**
+ * SPICE's spkezr_c: like spkez(), but `target`/`observer` are body
+ * *name* strings (e.g. `'MARS'`, `'EARTH BARYCENTER'`, or a plain
+ * integer string) instead of NAIF integer IDs -- see bodies.js for
+ * the name resolution rules (built-in NAIF names, or a loaded
+ * NAIF_BODY_NAME/NAIF_BODY_CODE kernel pool override).
+ *
+ * @param {string} targetName
+ * @param {string} observerName
+ * @param {number} et
+ * @param {string} [abcorr]
+ * @param {string} [ref]
+ * @param {import('./pool.js').KernelPool} [pool]
+ * @returns {{ position: number[], velocity: number[], lightTime: number }}
+ */
+export function spkezr(targetName, observerName, et, abcorr = 'NONE', ref = null, pool = globalPool) {
+  const target = bodyCode(targetName, pool);
+  const observer = bodyCode(observerName, pool);
+  return spkez(target, observer, et, abcorr, ref, pool);
 }

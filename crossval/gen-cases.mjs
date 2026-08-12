@@ -81,6 +81,37 @@ for (const et of ets) {
 spkezCases.push({ target: 399, center: 399, et: 0, abcorr: 'NONE' });
 spkezCases.push({ target: 399, center: 0, et: 1.0e6, abcorr: 'NONE' });
 
+// ref: rotate into a handful of the 21 built-in inertial frames --
+// this is what actually proves the extracted rotation matrices and
+// their composition order (see scripts/extract-inertial-frames.mjs)
+// are correct, not just self-consistent.
+const refFrames = ['J2000', 'ECLIPJ2000', 'B1950', 'GALACTIC', 'FK4'];
+for (const et of ets) {
+  for (const ref of refFrames) {
+    spkezCases.push({ target: 499, center: 10, et, abcorr: 'NONE', ref });
+    spkezCases.push({ target: 499, center: 0, et, abcorr: 'LT+S', ref }); // chained + corrected + rotated
+    spkezCases.push({ target: 301, center: 0, et, abcorr: 'CN+S', ref });
+  }
+}
+
+// spkezr: body name strings (a mix of aliases -- case, underscore vs.
+// space, plain-integer -- for the bodies the synthetic kernel above
+// actually has segments for), cross-checked against spiceypy's own
+// spkezr (not spkez), so name resolution is exercised end to end.
+const spkezrCases = [];
+for (const et of [0, 2500000]) {
+  for (const abcorr of ['NONE', 'LT+S']) {
+    for (const ref of ['J2000', 'ECLIPJ2000']) {
+      spkezrCases.push({ target: 'MARS', observer: 'SSB', et, abcorr, ref });
+      spkezrCases.push({ target: 'mars', observer: 'Solar System Barycenter', et, abcorr, ref });
+      spkezrCases.push({ target: 'Earth', observer: '0', et, abcorr, ref });
+      spkezrCases.push({ target: 'MOON', observer: 'earth', et, abcorr, ref });
+      spkezrCases.push({ target: 'sun', observer: 'SOLAR_SYSTEM_BARYCENTER', et, abcorr, ref });
+    }
+  }
+}
+spkezrCases.push({ target: 'NOT_A_REAL_BODY', observer: '0', et: 0, abcorr: 'NONE', ref: 'J2000' });
+
 const str2etCases = [
   '2000-01-01T12:00:00',
   '2000-01-01T12:00:00 TDB',
@@ -106,8 +137,8 @@ const str2etCases = [
 
 fs.writeFileSync(
   path.join(fixturesDir, 'cases.json'),
-  JSON.stringify({ str2etCases, spkezCases }, null, 2)
+  JSON.stringify({ str2etCases, spkezCases, spkezrCases }, null, 2)
 );
 
 console.log(`Wrote kernel.bsp (${segments.length} segments) and cases.json ` +
-  `(${str2etCases.length} str2et cases, ${spkezCases.length} spkez cases).`);
+  `(${str2etCases.length} str2et cases, ${spkezCases.length} spkez cases, ${spkezrCases.length} spkezr cases).`);

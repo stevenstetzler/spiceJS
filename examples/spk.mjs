@@ -9,8 +9,9 @@
 // To use a real kernel instead, skip the synthetic-file step below
 // and just call:
 //   furnsh('/path/to/de440s.bsp');
-//   spkState(499, 10, someEt);              // Mars, direct segment only
-//   spkez(399, 0, someEt, 'LT+S');           // Earth rel. SSB, chained + corrected
+//   spkState(499, 10, someEt);                       // Mars, direct segment only
+//   spkez(399, 0, someEt, 'LT+S');                    // Earth rel. SSB, chained + corrected
+//   spkezr('MARS', 'SSB', someEt, 'LT+S', 'ECLIPJ2000'); // by name, rotated into ECLIPJ2000
 //
 // Run from the repo root with:
 //   node examples/spk.mjs
@@ -18,7 +19,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { furnsh, spkState, spkez, spkSegments } from '../src/index.js';
+import { furnsh, spkState, spkez, spkezr, spkSegments } from '../src/index.js';
 import { writeSpk } from '../test/helpers/writeSpk.js';
 
 // Two segments, the way a real DE-series kernel is laid out: Mars
@@ -72,6 +73,11 @@ try {
   // the apparent position/velocity an observer at the SSB would see.
   const corrected = spkez(499, 0, 0, 'LT+S');
   console.log('Mars rel. SSB (LT+S):', corrected);
+
+  // Body name strings (spkezr) and a requested output frame (ref),
+  // rather than a NAIF ID and the native frame.
+  const byName = spkezr('MARS', 'SSB', 0, 'LT+S', 'ECLIPJ2000');
+  console.log('Mars rel. SSB (LT+S, by name, in ECLIPJ2000):', byName);
 } finally {
   fs.unlinkSync(tempFile);
 }

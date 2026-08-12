@@ -47,37 +47,42 @@ for (let i = 0; i < js.str2etResults.length; i++) {
   }
 }
 
-for (let i = 0; i < js.spkezResults.length; i++) {
-  const a = js.spkezResults[i];
-  const b = py.spkezResults[i];
-  if (a.error || b.error) {
-    if (Boolean(a.error) !== Boolean(b.error)) {
-      report('spkez', a.input, `spiceJS ${a.error ? `errored: ${a.error}` : 'succeeded'}, ` +
-        `spiceypy ${b.error ? `errored: ${b.error}` : 'succeeded'}`);
+function compareStateResults(label, jsResults, pyResults) {
+  for (let i = 0; i < jsResults.length; i++) {
+    const a = jsResults[i];
+    const b = pyResults[i];
+    if (a.error || b.error) {
+      if (Boolean(a.error) !== Boolean(b.error)) {
+        report(label, a.input, `spiceJS ${a.error ? `errored: ${a.error}` : 'succeeded'}, ` +
+          `spiceypy ${b.error ? `errored: ${b.error}` : 'succeeded'}`);
+      } else {
+        passed++;
+      }
+      continue;
+    }
+    const labels = ['x', 'y', 'z', 'vx', 'vy', 'vz'];
+    let ok = true;
+    const mismatches = [];
+    for (let k = 0; k < 6; k++) {
+      if (!closeEnough(a.state[k], b.state[k], 1e-5, 1e-9)) {
+        ok = false;
+        mismatches.push(`${labels[k]}: spiceJS ${a.state[k]} vs spiceypy ${b.state[k]}`);
+      }
+    }
+    if (!closeEnough(a.lightTime, b.lightTime, 1e-9, 1e-9)) {
+      ok = false;
+      mismatches.push(`lightTime: spiceJS ${a.lightTime} vs spiceypy ${b.lightTime}`);
+    }
+    if (!ok) {
+      report(label, a.input, mismatches.join('; '));
     } else {
       passed++;
     }
-    continue;
-  }
-  const labels = ['x', 'y', 'z', 'vx', 'vy', 'vz'];
-  let ok = true;
-  const mismatches = [];
-  for (let k = 0; k < 6; k++) {
-    if (!closeEnough(a.state[k], b.state[k], 1e-5, 1e-9)) {
-      ok = false;
-      mismatches.push(`${labels[k]}: spiceJS ${a.state[k]} vs spiceypy ${b.state[k]}`);
-    }
-  }
-  if (!closeEnough(a.lightTime, b.lightTime, 1e-9, 1e-9)) {
-    ok = false;
-    mismatches.push(`lightTime: spiceJS ${a.lightTime} vs spiceypy ${b.lightTime}`);
-  }
-  if (!ok) {
-    report('spkez', a.input, mismatches.join('; '));
-  } else {
-    passed++;
   }
 }
+
+compareStateResults('spkez', js.spkezResults, py.spkezResults);
+compareStateResults('spkezr', js.spkezrResults || [], py.spkezrResults || []);
 
 console.log(`\n${passed} passed, ${failures} failed (of ${passed + failures} cases).`);
 if (failures > 0) {

@@ -28,7 +28,11 @@ Supported today:
 - Loading **binary SPK** (trajectory) kernels and reading the
   position/velocity they contain -- a direct, single-segment lookup
   (`spkState()`), and a chained, aberration-corrected query across
-  arbitrary target/observer pairs (`spkez()`) -- see below.
+  arbitrary target/observer pairs, in either NAIF ID (`spkez()`) or
+  body **name** string (`spkezr()`) form -- see below.
+- Rotating a state into any of the 21 **built-in inertial frames**
+  (J2000, B1950, ECLIPJ2000, GALACTIC, ...) via `spkez()`/`spkezr()`'s
+  `ref` parameter.
 
 Not yet supported (all fail with a clear error, not a silent wrong
 answer):
@@ -39,13 +43,13 @@ answer):
   majority of publicly distributed planetary/lunar kernels, but not
   e.g. spacecraft kernels using Lagrange/Hermite interpolation (types
   5, 8/9/12/13).
-- Body **name** strings (`spkezr_c` takes `"EARTH"`; `spkez()` here
-  takes the NAIF integer ID `399`) -- needs sourcing NAIF's ~563-entry
-  built-in name table, a separate follow-up.
-- Frame transforms -- `spkez()`/`spkState()` return positions in
-  whatever frame the involved segments natively use (mixed frames
-  along a chain, or between target and observer, is a clear error
-  rather than a silent wrong answer), not an arbitrary requested frame.
+- **Body-fixed** frames (`IAU_MARS`, `IAU_EARTH`, ...) -- these rotate
+  with the planet, so (unlike the 21 built-in inertial frames) they
+  need reading text PCK orientation constants (a new kernel type), a
+  time-dependent pole/prime-meridian formula, and angular velocity for
+  the velocity half of a state. A mismatched/body-fixed frame anywhere
+  in a chain, or between target and observer, is a clear error rather
+  than a silent wrong answer.
 - Spacecraft clock (SCLK) strings and general time zones beyond the
   handful `str2et_c` itself documents (the U.S. zones, and `UTC±H:MM`).
 
@@ -224,24 +228,63 @@ spkez(399, 0, someEt, 'LT+S');
 with stellar aberration), `'CN'`/`'CN+S'` (3-iteration converged light
 time), and the `'X...'`-prefixed "transmission" case equivalents of
 each. See the doc comment on `spkez()` in `src/spk.js` for what each
-means. What it does *not* do: resolve body name strings (`spkezr_c`'s
-job, not implemented -- pass NAIF integer IDs) or rotate into a
-requested frame (also not implemented -- a mismatched frame anywhere
-along the chain, or between target and observer, is a clear error).
+means.
+
+For body **name** strings instead of NAIF integer IDs, use `spkezr()`
+-- SPICE's `spkezr_c` -- which just resolves both names and calls
+`spkez()`:
+
+```js
+import { spkezr } from './src/index.js';
+
+spkezr('MOON', 'EARTH', someEt, 'LT+S');
+// Names are matched case-insensitively, with internal whitespace
+// collapsed (but not interchangeable with underscores -- "EARTH
+// BARYCENTER" and "EARTH_BARYCENTER" are both separately valid
+// NAIF aliases): 'moon', 'Moon', 'MOON' all resolve the same way.
+// A loaded kernel's NAIF_BODY_NAME/NAIF_BODY_CODE pool variables
+// (see bodies.js) take priority over the ~692-entry built-in table,
+// so an FK can add or override names.
+```
+
+To express a result in a specific reference frame instead of whatever
+frame the segments natively use, pass `ref` (both `spkez()` and
+`spkezr()` take it as the 5th argument, before `pool`):
+
+```js
+spkez(499, 0, someEt, 'LT+S', 'ECLIPJ2000');
+spkezr('MARS', 'SSB', someEt, 'LT+S', 'ECLIPJ2000');
+```
+
+`ref` accepts the name of any of the **21 built-in inertial frames**:
+`J2000`, `B1950`, `FK4`, `GALACTIC`, `ECLIPJ2000`, `ECLIPB1950`, and
+the `DE-*` ephemeris frames (see `src/data/inertialFrames.js` for the
+full list). Body-fixed frames (`IAU_MARS`, ...) aren't supported yet.
+Omit `ref` (or pass `null`) to get the native, unrotated frame, same
+as before. If the segments involved don't already agree on one native
+frame, that's still a clear error regardless of `ref` -- there's no
+rotation to reconcile mismatched *inputs*, only to produce a requested
+*output*.
 
 The binary format itself (`src/daf.js` for the generic DAF container,
 `src/spk.js` for SPK's segment layout, Chebyshev evaluation, chaining,
-and aberration correction) was derived directly from NAIF's own source
+and aberration correction; `src/bodies.js`/`src/frames.js` for name and
+frame resolution) was derived directly from NAIF's own source
 (`zzdafnfr.c`, `dafps.c`, `spkr02.c`/`spke02.c`, `spkr03.c`/`spke03.c`,
 `spkgeo.c`, `spkssb.c`, `spkapp.c`, `stelab.c`, `stlabx.c`, `vrotv.c`,
-`clight.c` in the [OpenSpace/Spice](https://github.com/OpenSpace/Spice)
-mirror), not guessed at -- see the doc comments in those files for the
-byte layout and the algorithms. Because a real `.bsp` is
-tens-to-hundreds of megabytes and `naif.jpl.nasa.gov` isn't reachable
-from every environment, the test suite validates this against
-synthetic SPK files it builds itself (`test/helpers/writeSpk.js`)
-encoding exactly-checkable linear trajectories, rather than a bundled
-real kernel.
+`clight.c`, `zzidmap.c`, `chgirf.c` in the
+[OpenSpace/Spice](https://github.com/OpenSpace/Spice) mirror), not
+guessed at -- see the doc comments in those files, and
+`scripts/extract-body-ids.mjs`/`scripts/extract-inertial-frames.mjs`
+(which parse that source directly into `src/data/*.js` rather than
+hand-transcribing ~700 names and 21 rotation matrices), for the byte
+layout and the algorithms. Because a real `.bsp` is tens-to-hundreds of
+megabytes and `naif.jpl.nasa.gov` isn't reachable from every
+environment, the test suite validates this against synthetic SPK files
+it builds itself (`test/helpers/writeSpk.js`) encoding
+exactly-checkable linear trajectories, rather than a bundled real
+kernel -- and `crossval/` (see below) checks it against real CSPICE
+directly.
 
 ## Development
 
@@ -249,7 +292,17 @@ real kernel.
 npm test        # runs the test suite (node's built-in test runner)
 node examples/basic.mjs
 node examples/spk.mjs
-npm run crossval  # cross-validates str2et/spkez against spiceypy (needs `pip install spiceypy`) -- see crossval/README.md
+npm run crossval  # cross-validates str2et/spkez/spkezr against spiceypy (needs `pip install spiceypy`) -- see crossval/README.md
+```
+
+`src/data/bodyIds.js` and `src/data/inertialFrames.js` are generated,
+not hand-written -- re-run their extractors against a local clone of
+[OpenSpace/Spice](https://github.com/OpenSpace/Spice) if NAIF's tables
+ever change:
+
+```sh
+node scripts/extract-body-ids.mjs        <path-to-clone>/src/common/zzidmap.c
+node scripts/extract-inertial-frames.mjs <path-to-clone>/src/common/chgirf.c
 ```
 
 ## Acknowledgements
