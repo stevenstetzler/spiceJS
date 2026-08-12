@@ -12,7 +12,15 @@
 import { Buffer } from 'node:buffer';
 
 const FILE_RECORD_BYTES = 1024;
-const FIRST_DATA_ADDR = 257; // after the file record (addrs 1-128) and one summary record (129-256)
+// After the file record (addrs 1-128), one summary record (129-256), and
+// its paired name record (257-384). Real DAF files store array names in a
+// character record immediately following each summary record; spiceJS's
+// own reader never reads it (segments are looked up by ID, not name), but
+// real CSPICE reads it even for a plain segment search (confirmed against
+// spiceypy: omitting it entirely -- there's no record 3 at all -- fails
+// with SPICE(DAFCRNOTFOUND) reading record 3), so it has to be present,
+// even blank, for a file to be valid to other SPICE implementations.
+const FIRST_DATA_ADDR = 385;
 const MAX_SEGMENTS_PER_RECORD = 25; // (128 - 3) / 5, for SPK's ND=2,NI=6 -> 5 words/summary
 
 /**
@@ -46,7 +54,14 @@ export function writeSpk({ littleEndian = true, segments }) {
   });
 
   const totalWords = addr - 1;
-  const buf = Buffer.alloc(totalWords * 8);
+  // DAF files are Fortran direct-access files under the hood: every
+  // record, including the last, must be a full 1024 bytes. Confirmed
+  // against spiceypy/real CSPICE -- a file whose last record was left
+  // short (as this writer used to produce) fails deep in SPKR02/DAFGDA
+  // with a nonsensical "beginning address > ending address" error, since
+  // CSPICE's own record-based I/O doesn't handle a partial final record.
+  const totalRecords = Math.ceil(totalWords / 128);
+  const buf = Buffer.alloc(totalRecords * FILE_RECORD_BYTES);
 
   // --- File record ---
   buf.write('DAF/SPK ', 0, 'latin1');
@@ -75,6 +90,9 @@ export function writeSpk({ littleEndian = true, segments }) {
     writeInt32(buf, sumOffset + 36, seg.endAddr);
     sumOffset += 40; // 5 words (ND=2 + NI/2=3) * 8 bytes
   }
+
+  // --- Name record (record 3): blank, but must exist ---
+  buf.write(' '.repeat(FILE_RECORD_BYTES), FILE_RECORD_BYTES * 2, 'latin1');
 
   // --- Segment data ---
   for (const seg of laidOut) {

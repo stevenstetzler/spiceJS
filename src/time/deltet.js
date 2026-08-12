@@ -47,14 +47,19 @@ function deltaAtTable(pool) {
 /**
  * Look up TAI-UTC (in whole seconds) in effect at a given instant,
  * expressed as continuous UTC seconds past J2000.
+ *
+ * For epochs before the table's first entry, real CSPICE doesn't
+ * error -- it extrapolates using one second less than that first
+ * entry (confirmed bit-exact against spiceypy/real CSPICE across
+ * several epochs from 1900 through 1971; see crossval/). This isn't
+ * physically meaningful (UTC pre-1972 wasn't defined by whole-second
+ * leaps at all), but it's what NAIF's own toolkit does, so spiceJS
+ * matches it rather than erroring where real SPICE returns an answer.
  */
 export function lookupDeltaAt(utcContinuousSeconds, pool) {
   const table = deltaAtTable(pool);
   if (utcContinuousSeconds < table[0].epoch) {
-    throw new RangeError(
-      'spiceJS does not support UTC epochs before the start of the DELTA_AT table in the loaded ' +
-        `leapseconds kernel (its earliest entry is ${table[0].leapSeconds} leap seconds).`
-    );
+    return table[0].leapSeconds - 1;
   }
   let deltaAt = table[0].leapSeconds;
   for (const entry of table) {

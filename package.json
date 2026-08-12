@@ -11,7 +11,8 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test test/*.test.js test/*/*.test.js"
+    "test": "node --test test/*.test.js test/*/*.test.js",
+    "crossval": "node crossval/gen-cases.mjs && node crossval/run-js.mjs && python3 crossval/run-py.py && node crossval/compare.mjs"
   },
   "files": [
     "src"

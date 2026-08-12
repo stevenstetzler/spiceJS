@@ -48,7 +48,6 @@ answer):
   rather than a silent wrong answer), not an arbitrary requested frame.
 - Spacecraft clock (SCLK) strings and general time zones beyond the
   handful `str2et_c` itself documents (the U.S. zones, and `UTC±H:MM`).
-- UTC epochs before 1972-JAN-1 (where the leapseconds table starts).
 
 ## Install
 
@@ -75,8 +74,11 @@ et2utc(et);
 //=> '2026-08-11T12:00:00.000'
 
 // A "TDB"/"ET" suffix skips the leapseconds correction entirely --
-// no kernel needs to be loaded for these.
-str2et('2000-01-01T12:00:00 TDB');
+// no kernel needs to be loaded for these. Note the space, not "T":
+// an ISO "T" string rejects any trailing label at all (matching
+// real str2et_c), so a space-separated calendar string is needed to
+// combine a date with a label.
+str2et('2000-01-01 12:00:00 TDB');
 //=> 0
 ```
 
@@ -121,6 +123,22 @@ A calendar string needs either an ISO `YYYY-MM-DD` date or a month
 name -- three numeric fields with no month name (e.g. `01 02 03`) is
 rejected as ambiguous rather than guessed at, matching NAIF's own
 "ambiguous string" behavior.
+
+An ISO string using a literal `"T"` separator is stricter than every
+other format here: it rejects *any* trailing label (time system, time
+zone, A.M./P.M.) even though the identical date with a space instead
+of `"T"` accepts all of them -- `"2000-01-01T12:00:00 TDB"` is
+rejected, `"2000-01-01 12:00:00 TDB"` isn't. This isn't a spiceJS
+restriction; it's exactly how real `str2et_c` behaves (confirmed
+against spiceypy -- see `crossval/`). A trailing `Z` is fine either
+way, since it's part of the ISO shape itself, not a "label".
+
+UTC epochs before 1972-JAN-1, where the leapseconds table starts,
+don't error -- they extrapolate using one second less than the
+table's first `DELTA_AT` entry, for every earlier epoch, matching real
+`str2et_c` bit-for-bit (also confirmed against spiceypy). This isn't
+physically meaningful -- UTC before 1972 wasn't defined by whole-second
+leaps at all -- it's just what NAIF's own toolkit does.
 
 ### Isolated kernel pools
 
@@ -231,6 +249,7 @@ real kernel.
 npm test        # runs the test suite (node's built-in test runner)
 node examples/basic.mjs
 node examples/spk.mjs
+npm run crossval  # cross-validates str2et/spkez against spiceypy (needs `pip install spiceypy`) -- see crossval/README.md
 ```
 
 ## Acknowledgements
@@ -239,4 +258,10 @@ The [NAIF SPICE Toolkit](https://naif.jpl.nasa.gov/naif/toolkit.html)
 and its [unofficial GitHub mirror](https://github.com/OpenSpace/Spice)
 were used as the behavioral reference. `kernels/naif0012.tls` is
 NAIF's own publicly distributed leapseconds kernel, included here as a
-test fixture and usage example.
+test fixture and usage example. [spiceypy](https://github.com/AndrewAnnex/SpiceyPy)
+(a Python wrapper around the real CSPICE library) is used in
+`crossval/` to cross-check spiceJS's output against real CSPICE
+directly, rather than relying solely on documentation and hand
+derivation -- it's how the two behavioral quirks noted above (ISO `"T"`
+strings rejecting trailing labels, and the pre-1972 `DELTA_AT`
+extrapolation) were actually discovered.

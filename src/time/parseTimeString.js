@@ -140,6 +140,34 @@ export function parseTimeString(raw) {
     throw new Error('str2et: empty time string');
   }
 
+  // A literal "T" (not space) date-time separator triggers a strict,
+  // all-or-nothing grammar in real str2et_c: the *entire* string must
+  // match one of a fixed set of ISO patterns, with nothing else
+  // appended -- no time system, time zone, or A.M./P.M. label, even
+  // ones that would be perfectly valid on an otherwise-identical
+  // space-separated calendar string. Confirmed against spiceypy/real
+  // CSPICE: e.g. "...T12:00:00Z" parses fine, but "...T12:00:00Z TDB"
+  // and "...T12:00:00 PST" are both flatly rejected (SPICE(UNPARSEDTIME)),
+  // while "...12:00:00 TDB"/"...12:00:00 PST" (space instead of T) work.
+  if (/^[+-]?\d{1,4}-\d{1,3}(?:-\d{1,2})?T/.test(str)) {
+    const isoMatch = str.match(ISO_RE);
+    if (!isoMatch) {
+      throw new Error(
+        `str2et: "${raw}" uses the ISO "T" date/time separator but does not match any of the accepted ` +
+          'ISO formats (no trailing time system, time zone, or A.M./P.M. label is allowed on an ISO string)'
+      );
+    }
+    const year = Number(isoMatch[1]);
+    const hour = isoMatch[4] !== undefined ? Number(isoMatch[4]) : 0;
+    const minute = isoMatch[5] !== undefined ? Number(isoMatch[5]) : 0;
+    const second = isoMatch[6] !== undefined ? Number(isoMatch[6]) : 0;
+    const contSec =
+      isoMatch[3] !== undefined
+        ? calendarToSeconds(year, Number(isoMatch[2]), Number(isoMatch[3]), hour, minute, second)
+        : calendarToSeconds(year, 1, 1, hour, minute, second) + (Number(isoMatch[2]) - 1) * 86400;
+    return { contSec, system: 'UTC' };
+  }
+
   let tzOffsetHours = 0;
   let m;
 

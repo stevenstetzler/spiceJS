@@ -303,6 +303,36 @@ function relativeState(pool, target, observer, observerState, et) {
   };
 }
 
+/** The light-time iteration shared by spkez() and correctedPosition() below. */
+function lightTimeCorrectedRelative(pool, target, observer, observerState, et, correction) {
+  const ltSign = correction.xmit ? 1 : -1;
+  let relative = relativeState(pool, target, observer, observerState, et);
+  let lightTime = norm(relative.position) / CLIGHT_KM_S;
+  for (let i = 0; i < correction.maxIter; i++) {
+    relative = relativeState(pool, target, observer, observerState, et + ltSign * lightTime);
+    lightTime = norm(relative.position) / CLIGHT_KM_S;
+  }
+  return { relative, lightTime };
+}
+
+/** Light-time- and (if requested) stellar-aberration-corrected position only, as a function of `et`. */
+function correctedPosition(pool, target, observer, et, correction) {
+  const observerState = chainStateToSsb(pool, observer, et);
+  const { relative } = lightTimeCorrectedRelative(pool, target, observer, observerState, et, correction);
+  if (!correction.stellar) return relative.position;
+  const obsVelocity = correction.xmit ? scale(observerState.velocity, -1) : observerState.velocity;
+  return stellarAberration(relative.position, obsVelocity);
+}
+
+// Step size for the central-difference velocity of an aberration-
+// corrected position (see spkez()). 1 second is tiny relative to how
+// smoothly orbital positions vary (truncation error is negligible),
+// while position magnitudes are typically ~1e8 km, so float64
+// round-off in the difference is only ~1e-8 km -- ~1e-8 km/s of
+// velocity error, far below anything a Chebyshev-fit ephemeris is
+// accurate to in the first place.
+const VELOCITY_DERIVATIVE_STEP_S = 1.0;
+
 // Mirrors spkapp_'s exact correction table: iteration count and
 // direction ("reception" vs "transmission"), and whether stellar
 // aberration is applied.
@@ -361,6 +391,23 @@ function stellarAberration(position, vobs) {
  *   aberration.
  * @param {import('./pool.js').KernelPool} [pool]
  * @returns {{ position: number[], velocity: number[], lightTime: number }}
+ *
+ * A note on velocity for corrected states: NAIF's documented formula
+ * scales the target's velocity by `(1 +/- dLT/dET)` to account for
+ * how the light-time correction itself changes with the observation
+ * epoch, and further adjusts for the rate of change of the stellar
+ * aberration rotation when `+S` is requested -- deriving and
+ * hand-verifying both of those analytically is a real undertaking to
+ * get exactly right. Since the documentation itself defines velocity
+ * as "the derivative with respect to time of the position", spiceJS
+ * computes it that way directly: a central difference of the fully
+ * corrected *position* (light time, and stellar aberration if
+ * requested) with respect to `et`, which captures every one of those
+ * effects (including the observer's own motion) without re-deriving
+ * them by hand. See VELOCITY_DERIVATIVE_STEP_S for why this is
+ * accurate to far better than the underlying ephemeris data's own
+ * precision. `NONE` needs no correction, so it skips this entirely
+ * and uses the exact analytic velocity from the segment data.
  */
 export function spkez(target, observer, et, abcorr = 'NONE', pool = globalPool) {
   const key = String(abcorr).toUpperCase().replace(/\s+/g, '');
@@ -372,21 +419,22 @@ export function spkez(target, observer, et, abcorr = 'NONE', pool = globalPool) 
   }
 
   const observerState = chainStateToSsb(pool, observer, et);
-  const ltSign = correction.xmit ? 1 : -1;
-
-  let relative = relativeState(pool, target, observer, observerState, et);
-  let lightTime = norm(relative.position) / CLIGHT_KM_S;
-
-  for (let i = 0; i < correction.maxIter; i++) {
-    relative = relativeState(pool, target, observer, observerState, et + ltSign * lightTime);
-    lightTime = norm(relative.position) / CLIGHT_KM_S;
-  }
+  const { relative, lightTime } = lightTimeCorrectedRelative(pool, target, observer, observerState, et, correction);
 
   let position = relative.position;
+  let velocity = relative.velocity;
+
   if (correction.stellar) {
     const obsVelocity = correction.xmit ? scale(observerState.velocity, -1) : observerState.velocity;
     position = stellarAberration(position, obsVelocity);
   }
 
-  return { position, velocity: relative.velocity, lightTime };
+  if (correction.maxIter > 0 || correction.stellar) {
+    const h = VELOCITY_DERIVATIVE_STEP_S;
+    const plus = correctedPosition(pool, target, observer, et + h, correction);
+    const minus = correctedPosition(pool, target, observer, et - h, correction);
+    velocity = scale(sub(plus, minus), 1 / (2 * h));
+  }
+
+  return { position, velocity, lightTime };
 }

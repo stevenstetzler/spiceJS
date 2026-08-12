@@ -37,12 +37,31 @@ test('ISO date with no time-of-day defaults to midnight', () => {
 });
 
 test('explicit TDB/ET suffix is recognized and passed through unchanged', () => {
-  assert.deepEqual(parseTimeString('2000-01-01T12:00:00 TDB'), { contSec: J2000_NOON, system: 'TDB' });
-  assert.deepEqual(parseTimeString('2000-01-01T12:00:00 ET'), { contSec: J2000_NOON, system: 'TDB' });
+  // Space, not "T", separator: an ISO "T" string rejects any trailing
+  // label at all -- see the dedicated tests below.
+  assert.deepEqual(parseTimeString('2000-01-01 12:00:00 TDB'), { contSec: J2000_NOON, system: 'TDB' });
+  assert.deepEqual(parseTimeString('2000-01-01 12:00:00 ET'), { contSec: J2000_NOON, system: 'TDB' });
 });
 
 test('TDT-labeled strings pass through with system "TDT", uncorrected', () => {
-  assert.deepEqual(parseTimeString('2000-01-01T12:00:00 TDT'), { contSec: J2000_NOON, system: 'TDT' });
+  assert.deepEqual(parseTimeString('2000-01-01 12:00:00 TDT'), { contSec: J2000_NOON, system: 'TDT' });
+});
+
+test('an ISO "T" string rejects any trailing label, matching real str2et_c exactly', () => {
+  // Confirmed against spiceypy/real CSPICE: these all fail with
+  // SPICE(UNPARSEDTIME), even ones ("...Z TDB") built from two pieces
+  // ("...Z" and "... TDB") that are each individually valid.
+  for (const bad of [
+    '2000-01-01T12:00:00 TDB',
+    '2000-01-01T12:00:00 TDT',
+    '2000-01-01T12:00:00 UTC',
+    '2000-01-01T12:00:00 PST',
+    '2000-01-01T12:00:00Z TDB',
+  ]) {
+    assert.throws(() => parseTimeString(bad), /does not match any of the accepted ISO formats/, bad);
+  }
+  // A bare "Z" is part of the accepted ISO shape itself, not a "trailing label".
+  assert.deepEqual(parseTimeString('2000-01-01T12:00:00Z'), { contSec: J2000_NOON, system: 'UTC' });
 });
 
 test('rejects free-form dates with no month name at all', () => {
