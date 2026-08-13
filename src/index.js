@@ -6,4 +6,5 @@ export { spkState, spkSegments, spkez, spkezr } from './spk.js';
 export { pckSegments } from './pck.js';
 export { bodyCode } from './bodies.js';
 export { bodyValues } from './bodyConstants.js';
+export { prop2b } from './prop2b.js';
 export { frameId } from './frames.js';

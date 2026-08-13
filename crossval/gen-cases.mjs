@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeSpk } from '../test/helpers/writeSpk.js';
+import { prop2b } from '../src/prop2b.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixturesDir = path.join(here, 'fixtures');
@@ -81,11 +82,33 @@ function interpolatedSegment({ target, center, type, p0, v0, ets, degree }) {
 const EQUAL_STEP_ETS = Array.from({ length: 8 }, (_, i) => -RADIUS + (i * (2 * RADIUS)) / 7);
 const UNEQUAL_STEP_ETS = [-RADIUS, -0.6 * RADIUS, -0.1 * RADIUS, 0.05 * RADIUS, 0.4 * RADIUS, 0.7 * RADIUS, RADIUS];
 
+// Type 5 (two-body propagation): a handful of states sampled along a
+// genuinely eccentric orbit (not the circular-orbit trick
+// test/spk.test.js uses -- that's an independent, closed-form referee
+// for spiceJS's *own* correctness, but here only agreement with real
+// CSPICE is being tested, so any physically-consistent orbit works).
+// Each state is `prop2b`'d from a single reference state at t=0, so
+// they all genuinely lie on one continuous two-body orbit -- exactly
+// what a real type 5 segment's writer (spkw05_) requires.
+function type5Segment({ target, center, gm, pvinit, ets }) {
+  return {
+    target,
+    center,
+    frame: 1,
+    type: 5,
+    startEt: ets[0],
+    stopEt: ets[ets.length - 1],
+    gm,
+    epochs: ets,
+    states: ets.map((t) => prop2b(gm, pvinit, t)),
+  };
+}
+
 // 499 ("Mars") rel. 10 ("Sun"); 10 rel. 0 (SSB, nonzero velocity so
 // stellar aberration isn't a degenerate no-op); 399 ("Earth", type 3)
 // direct rel. SSB; 301 ("Moon") rel. 399, three hops from the SSB.
-// 599/699/799/899 (unused real planet IDs, borrowed as convenient
-// distinct target codes) rel. 10, one each of types 8/9/12/13.
+// 599/699/799/899/999 (unused real planet IDs, borrowed as convenient
+// distinct target codes) rel. 10, one each of types 8/9/12/13/5.
 const segments = [
   linearType2({ target: 499, center: 10, p0: [2.2e8, 1.5e8, 5e6], v0: [15, -8, 3] }),
   linearType2({ target: 10, center: 0, p0: [0, 0, 0], v0: [0.01, -0.005, 0.002] }),
@@ -127,6 +150,13 @@ const segments = [
     ets: UNEQUAL_STEP_ETS,
     degree: 3,
   }),
+  type5Segment({
+    target: 999,
+    center: 10,
+    gm: 1.32712440018e11, // GM_SUN (km^3/s^2) -- a real, plausible central-body mass
+    pvinit: [1.5e8, 0, 0, 0, 27, 5], // an eccentric heliocentric-scale orbit
+    ets: UNEQUAL_STEP_ETS,
+  }),
 ];
 
 fs.writeFileSync(path.join(fixturesDir, 'kernel.bsp'), writeSpk({ segments }));
@@ -157,9 +187,11 @@ for (const et of ets) {
     spkezCases.push({ target: 699, center: 10, et, abcorr }); // type 9
     spkezCases.push({ target: 799, center: 10, et, abcorr }); // type 12
     spkezCases.push({ target: 899, center: 10, et, abcorr }); // type 13
+    spkezCases.push({ target: 999, center: 10, et, abcorr }); // type 5
   }
   spkezCases.push({ target: 599, center: 0, et, abcorr: 'LT+S' }); // chained via 10
   spkezCases.push({ target: 899, center: 0, et, abcorr: 'CN+S' });
+  spkezCases.push({ target: 999, center: 0, et, abcorr: 'LT+S' }); // type 5, chained via 10
 }
 
 // ref: rotate into a handful of the 21 built-in inertial frames --
@@ -240,6 +272,24 @@ const bodyValueCases = [
   { body: 399, item: 'NOT_A_REAL_ITEM' },
 ];
 
+// prop2b: direct crossval against spiceypy.prop2b, independent of any
+// SPK/DAF plumbing -- diverse orbit regimes (circular, eccentric,
+// near-parabolic, hyperbolic), both signs of dt, and a range of
+// physical scales (LEO-ish up to heliocentric).
+const prop2bCases = [
+  { gm: 398600.4418, pvinit: [7000, 0, 0, 0, 7.5461, 0], dt: 3000 }, // ~circular LEO
+  { gm: 398600.4418, pvinit: [8000, 0, 0, 0, 6.5, 3.0], dt: 5000 }, // eccentric
+  { gm: 398600.4418, pvinit: [8000, 0, 0, 0, 6.5, 3.0], dt: -12000 }, // eccentric, negative dt
+  { gm: 398600.4418, pvinit: [42164, 0, 0, 0, 3.0747, 0], dt: 86400 }, // ~GEO, full day
+  { gm: 398600.4418, pvinit: [7000, 1000, -500, 0.5, 7.4, 0.3], dt: 200000 }, // long propagation, non-planar
+  { gm: 398600.4418, pvinit: [7000, 0, 0, 0, 10.5, 0], dt: 4000 }, // near-parabolic (fast)
+  { gm: 398600.4418, pvinit: [7000, 0, 0, 0, 12.0, 0], dt: 4000 }, // hyperbolic (escape)
+  { gm: 398600.4418, pvinit: [7000, 0, 0, 0, 12.0, 0], dt: -4000 }, // hyperbolic, negative dt
+  { gm: 1.32712440018e11, pvinit: [1.496e8, 0, 0, 0, 29.78, 0], dt: 3.15576e7 }, // ~1 heliocentric year
+  { gm: 1.32712440018e11, pvinit: [1.5e8, 0, 0, 0, 27, 5], dt: -1.0e7 }, // heliocentric, negative dt
+  { gm: 398600.4418, pvinit: [7000, 0, 0, 0, 7.5461, 0], dt: 0 }, // dt=0 identity
+];
+
 const str2etCases = [
   '2000-01-01T12:00:00',
   '2000-01-01T12:00:00 TDB',
@@ -265,9 +315,10 @@ const str2etCases = [
 
 fs.writeFileSync(
   path.join(fixturesDir, 'cases.json'),
-  JSON.stringify({ str2etCases, spkezCases, spkezrCases, spkStateCases, bodyValueCases }, null, 2)
+  JSON.stringify({ str2etCases, spkezCases, spkezrCases, spkStateCases, bodyValueCases, prop2bCases }, null, 2)
 );
 
 console.log(`Wrote kernel.bsp (${segments.length} segments) and cases.json ` +
   `(${str2etCases.length} str2et cases, ${spkezCases.length} spkez cases, ${spkezrCases.length} spkezr cases, ` +
-  `${spkStateCases.length} spkState cases, ${bodyValueCases.length} bodyValues cases).`);
+  `${spkStateCases.length} spkState cases, ${bodyValueCases.length} bodyValues cases, ` +
+  `${prop2bCases.length} prop2b cases).`);

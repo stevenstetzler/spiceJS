@@ -3,13 +3,13 @@
  * synthetic .bsp fixtures so spk.js/daf.js can be round-trip tested
  * without a real (multi-megabyte, network-fetched) kernel file. Only
  * supports what's needed for that: a single summary record (up to 25
- * segments) of type 2/3/8/9/12/13 data, both endiannesses.
+ * segments) of type 2/3/5/8/9/12/13 data, both endiannesses.
  *
  * This is the mirror image of src/daf.js + src/spk.js's decoding, so
  * it necessarily encodes the *same* understanding of the format --
  * see src/daf.js's doc comment for the byte layout this follows, and
- * src/math/interpolatedRecord.js's doc comment for types 8/9/12/13's
- * layout specifically. Types 9/13 (unequal time step) segments are
+ * src/math/interpolatedRecord.js's doc comment for types 5/8/9/12/13's
+ * layout specifically. Types 5/9/13 (unequal time step) segments are
  * capped at 100 states here so the on-disk "directory" (a lookup-speed
  * optimization for segments with more states than that) never needs
  * writing -- spiceJS's own reader ignores the directory regardless,
@@ -44,6 +44,10 @@ const MAX_SEGMENTS_PER_RECORD = 25; // (128 - 3) / 5, for SPK's ND=2,NI=6 -> 5 w
  *   - 9/13 (Lagrange/Hermite, unequal time step): `degree,
  *     states: number[][], epochs: number[]` (same length as `states`,
  *     <= 100 entries -- see the module doc comment).
+ *   - 5 (two-body propagation): `gm, states: number[][],
+ *     epochs: number[]` (same length as `states`, <= 100 entries --
+ *     see the module doc comment) -- identical on-disk shape to 9/13,
+ *     just `gm` in the trailer slot instead of `degree`.
  * @returns {Buffer}
  */
 export function writeSpk({ littleEndian = true, segments }) {
@@ -51,8 +55,8 @@ export function writeSpk({ littleEndian = true, segments }) {
     throw new Error(`writeSpk (test helper): only up to ${MAX_SEGMENTS_PER_RECORD} segments are supported`);
   }
   for (const seg of segments) {
-    if ((seg.type === 9 || seg.type === 13) && seg.states.length > 100) {
-      throw new Error('writeSpk (test helper): type 9/13 segments are capped at 100 states (no directory support)');
+    if ((seg.type === 5 || seg.type === 9 || seg.type === 13) && seg.states.length > 100) {
+      throw new Error('writeSpk (test helper): type 5/9/13 segments are capped at 100 states (no directory support)');
     }
   }
 
@@ -77,9 +81,9 @@ export function writeSpk({ littleEndian = true, segments }) {
       addr += seg.states.length * 6 + 4; // states + [begin, step, degree, N]
       return { ...seg, startAddr, endAddr: addr - 1 };
     }
-    if (seg.type === 9 || seg.type === 13) {
+    if (seg.type === 5 || seg.type === 9 || seg.type === 13) {
       const startAddr = addr;
-      addr += seg.states.length * 6 + seg.states.length + 2; // states + epochs + [degree, N] (no directory)
+      addr += seg.states.length * 6 + seg.states.length + 2; // states + epochs + [degree|gm, N] (no directory)
       return { ...seg, startAddr, endAddr: addr - 1 };
     }
     throw new Error(`writeSpk (test helper): unsupported segment type ${seg.type}`);
@@ -175,6 +179,21 @@ export function writeSpk({ littleEndian = true, segments }) {
       }
       // No directory: writeSpk() already rejected states.length > 100.
       writeDouble(buf, byteOffset, seg.degree);
+      writeDouble(buf, byteOffset + 8, seg.states.length);
+    } else if (seg.type === 5) {
+      let byteOffset = (seg.startAddr - 1) * 8;
+      for (const state of seg.states) {
+        for (const c of state) {
+          writeDouble(buf, byteOffset, c);
+          byteOffset += 8;
+        }
+      }
+      for (const epoch of seg.epochs) {
+        writeDouble(buf, byteOffset, epoch);
+        byteOffset += 8;
+      }
+      // No directory: writeSpk() already rejected states.length > 100.
+      writeDouble(buf, byteOffset, seg.gm);
       writeDouble(buf, byteOffset + 8, seg.states.length);
     }
   }

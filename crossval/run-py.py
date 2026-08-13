@@ -71,6 +71,14 @@ for c in cases.get("bodyValueCases", []):
     except Exception as err:  # noqa: BLE001
         body_value_results.append({"input": c, "error": str(err)})
 
+prop2b_results = []
+for c in cases.get("prop2bCases", []):
+    try:
+        state = spice.prop2b(c["gm"], c["pvinit"], c["dt"])
+        prop2b_results.append({"input": c, "state": [float(x) for x in state]})
+    except Exception as err:  # noqa: BLE001
+        prop2b_results.append({"input": c, "error": str(err)})
+
 with open(os.path.join(FIXTURES, "results-py.json"), "w") as f:
     json.dump(
         {
@@ -79,6 +87,7 @@ with open(os.path.join(FIXTURES, "results-py.json"), "w") as f:
             "spkezrResults": spkezr_results,
             "spkStateResults": spk_state_results,
             "bodyValueResults": body_value_results,
+            "prop2bResults": prop2b_results,
         },
         f,
         indent=2,
@@ -87,5 +96,6 @@ with open(os.path.join(FIXTURES, "results-py.json"), "w") as f:
 print(
     f"spiceypy: {len(str2et_results)} str2et cases, {len(spkez_results)} spkez cases, "
     f"{len(spkezr_results)} spkezr cases, {len(spk_state_results)} spkState cases, "
-    f"{len(body_value_results)} bodyValues cases -> results-py.json (CSPICE {spice.tkvrsn('TOOLKIT')})"
+    f"{len(body_value_results)} bodyValues cases, {len(prop2b_results)} prop2b cases "
+    f"-> results-py.json (CSPICE {spice.tkvrsn('TOOLKIT')})"
 )

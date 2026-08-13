@@ -39,20 +39,29 @@
  * math/lagrangeHermite.js (the interpolation itself, shared between
  * the equal- and unequal-spacing pairs -- NAIF's LGRESP/HRMESP are
  * just equal-spacing shortcuts of the same LGRINT/HRMINT algorithms).
+ *
+ * Type 5 (two-body/Keplerian propagation) is also supported -- unlike
+ * every other type here, it's not an interpolation scheme: the
+ * segment stores a handful of states, and evaluating it means
+ * propagating the two bracketing states forward/backward to `et` via
+ * two-body motion (prop2b.js) and blending them (see evaluateType5()
+ * below). See math/interpolatedRecord.js's selectBracketingPair() for
+ * the (shared-with-9/13) on-disk layout.
  */
 import { parseDaf } from './daf.js';
 import { evaluate, evaluateWithDerivative } from './math/chebyshev.js';
 import { selectRecord } from './math/chebyshevRecord.js';
-import { selectEqualStepWindow, selectUnequalStepWindow } from './math/interpolatedRecord.js';
+import { selectEqualStepWindow, selectUnequalStepWindow, selectBracketingPair } from './math/interpolatedRecord.js';
 import { lagrangeInterpolate, hermiteInterpolate } from './math/lagrangeHermite.js';
 import { add, sub, scale, cross, norm, unit, rotateAboutAxis } from './math/vector3.js';
 import { globalPool } from './pool.js';
 import { frameId as resolveFrameId, frameCenter, rotateState } from './frames.js';
 import { bodyCode } from './bodies.js';
+import { prop2b } from './prop2b.js';
 
 const SPK_ND = 2;
 const SPK_NI = 6;
-const SUPPORTED_TYPES = new Set([2, 3, 8, 9, 12, 13]);
+const SUPPORTED_TYPES = new Set([2, 3, 5, 8, 9, 12, 13]);
 
 const CLIGHT_KM_S = 299792.458; // exact, by SI definition of the meter
 const MAX_CHAIN_HOPS = 20; // matches NAIF's own CHLEN (spkgeo.f)
@@ -158,6 +167,45 @@ function evaluateHermite(segment, et, selectWindow) {
 }
 
 /**
+ * Type 5 (two-body propagation, spke05.c): propagate each of the two
+ * bracketing states to `et` via prop2b, then blend with a cosine
+ * weight `W(t) = 0.5 + 0.5*cos(pi*(t-t1)/(t2-t1))` that is 1 at `t1`
+ * and 0 at `t2` (so the result is continuous with each endpoint's own
+ * pure two-body propagation as `et` approaches it). `W`'s derivative
+ * contributes an extra term to velocity via the product rule, since
+ * `pos(t) = W(t)*p1(t) + (1-W(t))*p2(t)` is itself a function of `t`
+ * through both the propagated states *and* the blend weight.
+ *
+ * At the segment's own start/end (selectBracketingPair's clamped,
+ * repeated-epoch case, `t1 === t2`), there's nothing to blend --
+ * `W` would be 0/0 -- so this just returns the single propagation.
+ */
+function evaluateType5(segment, et) {
+  const { gm, epochs, states } = selectBracketingPair(segment, et);
+  const [t1, t2] = epochs;
+
+  if (t1 === t2) {
+    const state = prop2b(gm, states[0], et - t1);
+    return { position: state.slice(0, 3), velocity: state.slice(3, 6) };
+  }
+
+  const state1 = prop2b(gm, states[0], et - t1);
+  const state2 = prop2b(gm, states[1], et - t2);
+
+  const theta = (Math.PI * (et - t1)) / (t2 - t1);
+  const w = 0.5 + 0.5 * Math.cos(theta);
+  const dw = (-0.5 * Math.sin(theta) * Math.PI) / (t2 - t1);
+
+  const position = [];
+  const velocity = [];
+  for (let axis = 0; axis < 3; axis++) {
+    position.push(w * state1[axis] + (1 - w) * state2[axis]);
+    velocity.push(w * state1[axis + 3] + (1 - w) * state2[axis + 3] + dw * (state1[axis] - state2[axis]));
+  }
+  return { position, velocity };
+}
+
+/**
  * Evaluate a segment at `et` (TDB seconds past J2000), returning
  * `{ position: [x,y,z], velocity: [vx,vy,vz] }` in km and km/s, in
  * the segment's native reference frame (see `segment.frame`) -- no
@@ -169,6 +217,8 @@ export function evaluateSegment(segment, et) {
       return evaluateType2(segment, et);
     case 3:
       return evaluateType3(segment, et);
+    case 5:
+      return evaluateType5(segment, et);
     case 8:
       return evaluateLagrange(segment, et, selectEqualStepWindow);
     case 9:
@@ -180,7 +230,7 @@ export function evaluateSegment(segment, et) {
     default:
       throw new Error(
         `spk: segment data type ${segment.type} is not supported yet (supported: 2, 3 -- Chebyshev; ` +
-          '8, 9 -- Lagrange; 12, 13 -- Hermite)'
+          '5 -- two-body propagation; 8, 9 -- Lagrange; 12, 13 -- Hermite)'
       );
   }
 }

@@ -38,24 +38,26 @@ Supported today:
 - Loading **binary PCK** (body orientation) kernels (`pckSegments()`),
   used for the time-varying, angular-velocity-aware half of body-fixed
   frame support above.
-- SPK segment types 2/3 (Chebyshev), **8/9 (Lagrange)**, and **12/13
-  (Hermite)** -- covers essentially every publicly distributed
-  planetary/lunar/satellite kernel and most spacecraft/station ones.
-  `furnsh()` also accepts the older, generic `NAIF/DAF` ID word some
-  real kernels use instead of `DAF/SPK`/`DAF/PCK` (routed by summary
-  shape instead of the ID word text, matching real CSPICE).
+- SPK segment types 2/3 (Chebyshev), **5 (two-body/Keplerian
+  propagation)**, **8/9 (Lagrange)**, and **12/13 (Hermite)** -- covers
+  essentially every publicly distributed planetary/lunar/satellite
+  kernel and most spacecraft/station ones. `furnsh()` also accepts the
+  older, generic `NAIF/DAF` ID word some real kernels use instead of
+  `DAF/SPK`/`DAF/PCK` (routed by summary shape instead of the ID word
+  text, matching real CSPICE).
 - Reading arbitrary body constants from a loaded text PCK (e.g.
   `BODY399_RADII`, `BODY399_GM`) with `bodyValues(body, item)`.
+- **`prop2b(gm, pvinit, dt)`**: NAIF's universal-variables two-body
+  propagator, exposed directly as a standalone routine (not just an
+  SPK type 5 implementation detail) -- propagates a state under pure
+  Keplerian motion by `dt` seconds, uniformly across elliptical,
+  parabolic, and hyperbolic orbits.
 
 Not yet supported (all fail with a clear error, not a silent wrong
 answer):
 - Other binary kernels (CK) and DAS-based kernels (DSK) -- CK shares
   SPK/PCK's DAF container (`src/daf.js`) and is a natural next step;
   DSK is a different container format entirely.
-- SPK/PCK segment type 5 (discrete two-body/Keplerian propagation) --
-  unlike the interpolated types above, this needs a genuinely new
-  two-body propagator, and is rare in real kernels (superseded by
-  9/13 in practice).
 - CK (spacecraft-orientation), dynamic, and switch reference frames,
   and the one built-in class 4 frame in NAIF's table (`EARTH_FIXED`, a
   hardcoded ITRF93-relative frame, not PCK-driven). A mismatched frame
@@ -217,9 +219,10 @@ a loaded segment whose `(target, center)` match exactly (use
 `spkSegments()` to see what's available). For most generic planetary
 kernels this covers the common cases directly (e.g. any planet
 relative to the SSB, the Moon relative to the Earth-Moon barycenter).
-Segment types 2/3 (Chebyshev), 8/9 (Lagrange), and 12/13 (Hermite) are
-all supported transparently -- `spkState()`/`spkez()`/`spkezr()` don't
-need to know which one a given segment uses.
+Segment types 2/3 (Chebyshev), 5 (two-body propagation), 8/9
+(Lagrange), and 12/13 (Hermite) are all supported transparently --
+`spkState()`/`spkez()`/`spkezr()` don't need to know which one a given
+segment uses.
 
 For an arbitrary target/observer pair, use `spkez()` -- it's SPICE's
 `spkez_c`: it chains through intermediate bodies back to the Solar
@@ -364,6 +367,30 @@ furnsh('/path/to/pck00011.tpc');
 bodyValues(399, 'RADII');   // => [6378.1366, 6378.1366, 6356.7519]
 bodyValues('EARTH', 'GM');  // by name too, same resolution rules as spkezr()
 ```
+
+## Two-body propagation
+
+`prop2b(gm, pvinit, dt)` -- NAIF's `prop2b_c` -- propagates a state
+`[x, y, z, vx, vy, vz]` (km, km/s) forward or backward by `dt` seconds
+under pure Keplerian (two-body) motion about a center with
+gravitational parameter `gm` (km^3/s^2), using the universal-variables
+formulation so it works uniformly across elliptical, parabolic, and
+hyperbolic orbits:
+
+```js
+import { prop2b } from './src/index.js';
+
+const gm = 398600.4418; // Earth
+const pvinit = [7000, 0, 0, 0, 7.5461, 0]; // ~circular LEO
+prop2b(gm, pvinit, 3600); // state one hour later, ignoring perturbations
+```
+
+This is also the building block SPK segment type 5 is evaluated with
+(`src/spk.js`'s `evaluateType5()`): each type 5 segment stores a
+handful of states, and reading one at a given `et` means propagating
+the two bracketing states to `et` via `prop2b` and blending them with
+a cosine weight -- not interpolating stored samples, unlike every
+other supported SPK type.
 
 ## Development
 

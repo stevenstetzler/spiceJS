@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { furnsh, str2et, spkez, spkezr, spkState, bodyValues } from '../src/index.js';
+import { furnsh, str2et, spkez, spkezr, spkState, bodyValues, prop2b } from '../src/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixturesDir = path.join(here, 'fixtures');
@@ -15,7 +15,7 @@ furnsh(path.join(here, 'gm_de440.tpc'));
 furnsh(path.join(here, 'dss17.bsp'));
 furnsh(path.join(fixturesDir, 'kernel.bsp'));
 
-const { str2etCases, spkezCases, spkezrCases, spkStateCases, bodyValueCases } = JSON.parse(
+const { str2etCases, spkezCases, spkezrCases, spkStateCases, bodyValueCases, prop2bCases } = JSON.parse(
   fs.readFileSync(path.join(fixturesDir, 'cases.json'), 'utf8')
 );
 
@@ -62,12 +62,24 @@ const bodyValueResults = (bodyValueCases || []).map((c) => {
   }
 });
 
+const prop2bResults = (prop2bCases || []).map((c) => {
+  try {
+    return { input: c, state: prop2b(c.gm, c.pvinit, c.dt) };
+  } catch (err) {
+    return { input: c, error: err.message };
+  }
+});
+
 fs.writeFileSync(
   path.join(fixturesDir, 'results-js.json'),
-  JSON.stringify({ str2etResults, spkezResults, spkezrResults, spkStateResults, bodyValueResults }, null, 2)
+  JSON.stringify(
+    { str2etResults, spkezResults, spkezrResults, spkStateResults, bodyValueResults, prop2bResults },
+    null,
+    2
+  )
 );
 console.log(
   `spiceJS: ${str2etResults.length} str2et cases, ${spkezResults.length} spkez cases, ` +
     `${spkezrResults.length} spkezr cases, ${spkStateResults.length} spkState cases, ` +
-    `${bodyValueResults.length} bodyValues cases -> results-js.json`
+    `${bodyValueResults.length} bodyValues cases, ${prop2bResults.length} prop2b cases -> results-js.json`
 );

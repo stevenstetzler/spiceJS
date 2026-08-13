@@ -182,6 +182,96 @@ test('writeSpk rejects a type 9/13 segment with more than 100 states', () => {
   assert.throws(() => writeSpk({ segments: [seg] }), /capped at 100 states/);
 });
 
+// --- type 5: two-body propagation ---
+
+// A circular orbit in the xy plane, given directly by its closed form
+// -- position(t) = r*(cos(w*t), sin(w*t), 0), velocity the exact
+// derivative -- with gm chosen (gm = w^2*r^3) so this closed form
+// *is* the exact two-body solution. This is an independent referee:
+// it doesn't call prop2b at all, so checking evaluateSegment's type 5
+// output against it exercises prop2b and the cosine blend together,
+// not just self-consistency. Since every state stored in the segment
+// already lies exactly on this same orbit, propagating any one of
+// them by two-body motion to any other time on the orbit reproduces
+// this closed form exactly -- so the blend of the two propagated
+// (but identical) states is exact too, not merely close.
+function circularOrbitState(w, r, t) {
+  const c = Math.cos(w * t);
+  const s = Math.sin(w * t);
+  return [r * c, r * s, 0, -r * w * s, r * w * c, 0];
+}
+
+function circularOrbitSegment({ target = 499, center = 10, epochs } = {}) {
+  const r = 7000; // km
+  const w = 0.0011; // rad/s -- arbitrary, gives a period of a couple hours
+  const gm = w * w * r * r * r;
+  const states = epochs.map((t) => circularOrbitState(w, r, t));
+  return {
+    target,
+    center,
+    frame: 1,
+    type: 5,
+    startEt: epochs[0],
+    stopEt: epochs[epochs.length - 1],
+    gm,
+    states,
+    epochs,
+    expectedStateAt: (t) => ({
+      position: circularOrbitState(w, r, t).slice(0, 3),
+      velocity: circularOrbitState(w, r, t).slice(3, 6),
+    }),
+  };
+}
+
+test('type 5: two-body-propagated circular orbit matches the closed-form answer exactly', () => {
+  const epochs = [-500, -100, 300, 900]; // deliberately non-uniform, like the 9/13 tests above
+  const seg = circularOrbitSegment({ epochs });
+  const [segment] = loadSpk(writeSpk({ segments: [seg] }));
+
+  // Points strictly inside a bracketing interval (blend is active),
+  // plus exactly on an interior epoch (where the bracket boundary
+  // flips from one pair to the next) and at the segment's own start/
+  // end epochs (where the bracket is a single repeated state).
+  for (const et of [-500, -450, -300, -100, 0, 300, 550, 700, 900]) {
+    const { position, velocity } = evaluateSegment(segment, et);
+    const expected = seg.expectedStateAt(et);
+    position.forEach((p, i) => closeTo(p, expected.position[i], 1e-7));
+    velocity.forEach((v, i) => closeTo(v, expected.velocity[i], 1e-10));
+  }
+});
+
+test('type 5: querying beyond the segment span clamps to a repeated epoch (extrapolated, not blended)', () => {
+  const epochs = [-500, -100, 300, 900];
+  const seg = circularOrbitSegment({ epochs });
+  const [segment] = loadSpk(writeSpk({ segments: [seg] }));
+
+  for (const et of [-2000, -501, 901, 5000]) {
+    const { position, velocity } = evaluateSegment(segment, et);
+    const expected = seg.expectedStateAt(et);
+    position.forEach((p, i) => closeTo(p, expected.position[i], 1e-7));
+    velocity.forEach((v, i) => closeTo(v, expected.velocity[i], 1e-10));
+  }
+});
+
+test('type 5: a single-state segment has no bracket to blend -- every query is a plain propagation', () => {
+  const seg = circularOrbitSegment({ epochs: [100] });
+  const [segment] = loadSpk(writeSpk({ segments: [seg] }));
+
+  for (const et of [-5000, 100, 6000]) {
+    const { position, velocity } = evaluateSegment(segment, et);
+    const expected = seg.expectedStateAt(et);
+    position.forEach((p, i) => closeTo(p, expected.position[i], 1e-7));
+    velocity.forEach((v, i) => closeTo(v, expected.velocity[i], 1e-10));
+  }
+});
+
+test('writeSpk rejects a type 5 segment with more than 100 states', () => {
+  const states = Array.from({ length: 101 }, (_, i) => [i, 0, 0, 0, 0, 0]);
+  const epochs = states.map((_, i) => i * 60);
+  const seg = { target: 499, center: 10, frame: 1, type: 5, startEt: 0, stopEt: 6000, gm: 398600.4418, states, epochs };
+  assert.throws(() => writeSpk({ segments: [seg] }), /capped at 100 states/);
+});
+
 test('multi-record segments select the correct record by ET', () => {
   // record 1: position(t) = t, for t in [0, 100]           (v = +1 km/s)
   // record 2: position(t) = 200 - t, for t in [100, 200]   (v = -1 km/s)
@@ -211,11 +301,10 @@ test('multi-record segments select the correct record by ET', () => {
 });
 
 test('evaluateSegment rejects unsupported segment types', () => {
-  // Type 5 (two-body/Keplerian propagation) is a deliberately
-  // out-of-scope type -- writeSpk() (the test helper) doesn't even
-  // know how to write one, so construct just enough of a segment
-  // object to reach evaluateSegment()'s own type dispatch directly.
-  assert.throws(() => evaluateSegment({ type: 5 }, 0), /type 5 is not supported/);
+  // Type 1 (modified difference arrays) is a deliberately out-of-scope
+  // type -- construct just enough of a segment object to reach
+  // evaluateSegment()'s own type dispatch directly.
+  assert.throws(() => evaluateSegment({ type: 1 }, 0), /type 1 is not supported/);
 });
 
 test('findSegment / spkState: direct lookup, with helpful errors', () => {

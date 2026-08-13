@@ -145,6 +145,7 @@ compareStateResults('spkez', js.spkezResults, py.spkezResults);
 compareStateResults('spkezr', js.spkezrResults || [], py.spkezrResults || []);
 compareStateResults('spkState', js.spkStateResults || [], py.spkStateResults || []);
 compareBodyValueResults('bodyValues', js.bodyValueResults || [], py.bodyValueResults || []);
+compareStateResults('prop2b', js.prop2bResults || [], py.prop2bResults || []);
 
 console.log(`\n${passed} passed, ${failures} failed (of ${passed + failures} cases).`);
 if (failures > 0) {
