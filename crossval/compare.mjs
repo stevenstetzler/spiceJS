@@ -96,7 +96,9 @@ function compareStateResults(label, jsResults, pyResults) {
         mismatches.push(`${labels[k]}: spiceJS ${a.state[k]} vs spiceypy ${b.state[k]}`);
       }
     }
-    if (!closeEnough(a.lightTime, b.lightTime, 1e-9, 1e-9)) {
+    // spkState() (and thus spkgeo, its spiceypy comparison point) has
+    // no lightTime -- only compare it when both sides actually report one.
+    if ('lightTime' in a && 'lightTime' in b && !closeEnough(a.lightTime, b.lightTime, 1e-9, 1e-9)) {
       ok = false;
       mismatches.push(`lightTime: spiceJS ${a.lightTime} vs spiceypy ${b.lightTime}`);
     }
@@ -108,8 +110,41 @@ function compareStateResults(label, jsResults, pyResults) {
   }
 }
 
+function compareBodyValueResults(label, jsResults, pyResults) {
+  for (let i = 0; i < jsResults.length; i++) {
+    const a = jsResults[i];
+    const b = pyResults[i];
+    if (a.error || b.error) {
+      if (Boolean(a.error) !== Boolean(b.error)) {
+        report(label, a.input, `spiceJS ${a.error ? `errored: ${a.error}` : 'succeeded'}, ` +
+          `spiceypy ${b.error ? `errored: ${b.error}` : 'succeeded'}`);
+      } else {
+        passed++;
+      }
+      continue;
+    }
+    if (a.values.length !== b.values.length) {
+      report(label, a.input, `length mismatch: spiceJS ${a.values.length} vs spiceypy ${b.values.length}`);
+      continue;
+    }
+    const mismatches = [];
+    for (let k = 0; k < a.values.length; k++) {
+      if (!closeEnough(a.values[k], b.values[k], 1e-9, 1e-9)) {
+        mismatches.push(`[${k}]: spiceJS ${a.values[k]} vs spiceypy ${b.values[k]}`);
+      }
+    }
+    if (mismatches.length) {
+      report(label, a.input, mismatches.join('; '));
+    } else {
+      passed++;
+    }
+  }
+}
+
 compareStateResults('spkez', js.spkezResults, py.spkezResults);
 compareStateResults('spkezr', js.spkezrResults || [], py.spkezrResults || []);
+compareStateResults('spkState', js.spkStateResults || [], py.spkStateResults || []);
+compareBodyValueResults('bodyValues', js.bodyValueResults || [], py.bodyValueResults || []);
 
 console.log(`\n${passed} passed, ${failures} failed (of ${passed + failures} cases).`);
 if (failures > 0) {

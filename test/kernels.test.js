@@ -8,6 +8,8 @@ import { KernelPool } from '../src/pool.js';
 import { furnsh, unload, kclear } from '../src/kernels.js';
 import { spkState, spkSegments } from '../src/spk.js';
 import { writeSpk } from './helpers/writeSpk.js';
+import { writePck } from './helpers/writePck.js';
+import { pckSegments } from '../src/pck.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const LSK = path.join(here, '../kernels/naif0012.tls');
@@ -94,6 +96,63 @@ test('furnsh loads a binary SPK kernel and indexes its segments', () => {
     const { position, velocity } = spkState(499, 10, 0, pool);
     assert.deepEqual(position, [100, 200, 300]);
     assert.deepEqual(velocity, [0.01, 0.02, 0.03]);
+  } finally {
+    fs.unlinkSync(filePath);
+  }
+});
+
+test('furnsh routes a generic "NAIF/DAF"-worded SPK-shaped file to SPK (real, older kernels use this word)', () => {
+  const pool = new KernelPool();
+  const buffer = writeSpk({
+    segments: [
+      {
+        target: 399017,
+        center: 399,
+        frame: 13000,
+        type: 2,
+        startEt: -1000,
+        stopEt: 1000,
+        init: -1000,
+        intlen: 2000,
+        records: [{ mid: 0, radius: 1000, coeffsByAxis: [[573.5, 0], [-4986.7, 0], [3922.4, 0]] }],
+      },
+    ],
+  });
+  buffer.write('NAIF/DAF', 0, 'latin1');
+  const filePath = path.join(os.tmpdir(), `spicejs-test-naifdaf-${process.pid}.bsp`);
+  fs.writeFileSync(filePath, buffer);
+  try {
+    furnsh(filePath, pool);
+    assert.deepEqual(spkSegments(pool), [
+      { target: 399017, center: 399, frame: 13000, type: 2, startEt: -1000, stopEt: 1000 },
+    ]);
+  } finally {
+    fs.unlinkSync(filePath);
+  }
+});
+
+test('furnsh routes a generic "NAIF/DAF"-worded PCK-shaped file to PCK', () => {
+  const pool = new KernelPool();
+  const buffer = writePck({
+    segments: [
+      {
+        frame: 31008,
+        refFrame: 1,
+        type: 2,
+        startEt: -1000,
+        stopEt: 1000,
+        init: -1000,
+        intlen: 2000,
+        records: [{ mid: 0, radius: 1000, coeffsByAxis: [[0.1, 0], [0.2, 0], [0.3, 0]] }],
+      },
+    ],
+  });
+  buffer.write('NAIF/DAF', 0, 'latin1');
+  const filePath = path.join(os.tmpdir(), `spicejs-test-naifdaf-${process.pid}.bpc`);
+  fs.writeFileSync(filePath, buffer);
+  try {
+    furnsh(filePath, pool);
+    assert.deepEqual(pckSegments(pool), [{ frame: 31008, refFrame: 1, type: 2, startEt: -1000, stopEt: 1000 }]);
   } finally {
     fs.unlinkSync(filePath);
   }

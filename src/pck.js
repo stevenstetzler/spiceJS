@@ -35,7 +35,10 @@ const SUPPORTED_TYPES = new Set([2]);
  */
 export function loadPck(buffer) {
   const daf = parseDaf(buffer);
-  if (!daf.idWord.startsWith('DAF/PCK')) {
+  // "NAIF/DAF" is a generic, older ID word real CSPICE still accepts
+  // as PCK data -- see kernels.js's furnsh() for the shape-based
+  // (ND=2,NI=5) disambiguation from SPK/CK.
+  if (!daf.idWord.startsWith('DAF/PCK') && !daf.idWord.startsWith('NAIF/DAF')) {
     throw new Error(`pck: not a binary PCK file (DAF ID word is "${daf.idWord}")`);
   }
   if (daf.nd !== PCK_ND || daf.ni !== PCK_NI) {

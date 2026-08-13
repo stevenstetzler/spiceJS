@@ -7,11 +7,11 @@
  *   ic = [target, center, frame, type, startAddr, endAddr]
  * `startAddr`/`endAddr` bound the segment's raw data as DAF addresses.
  *
- * Only segment types 2 and 3 (Chebyshev polynomials) are supported --
- * these cover the vast majority of publicly distributed planetary,
- * lunar, and satellite kernels. Both share the same logical-record
- * layout (confirmed against NAIF's spkr02.c/spke02.c and
- * spkr03.c/spke03.c):
+ * Segment types 2/3 (Chebyshev polynomials -- these cover the vast
+ * majority of publicly distributed planetary, lunar, and satellite
+ * kernels), 8/9 (Lagrange), and 12/13 (Hermite) are supported. Types 2
+ * and 3 share the same logical-record layout (confirmed against
+ * NAIF's spkr02.c/spke02.c and spkr03.c/spke03.c):
  *
  *   segment = [record_0, record_1, ..., record_{N-1}, INIT, INTLEN, RSIZE, N]
  *   record  = [MID, RADIUS, coeffs...]
@@ -31,10 +31,20 @@
  *     (X, Y, Z, VX, VY, VZ) -- velocity is its own independently-fit
  *     polynomial, evaluated directly (no differentiation, no RADIUS
  *     scaling).
+ *
+ * Types 8/9 (Lagrange) and 12/13 (Hermite) -- interpolated, windowed
+ * states rather than Chebyshev coefficients -- are also supported; see
+ * math/interpolatedRecord.js (segment layout and window selection,
+ * shared between the equal- and unequal-time-step pairs) and
+ * math/lagrangeHermite.js (the interpolation itself, shared between
+ * the equal- and unequal-spacing pairs -- NAIF's LGRESP/HRMESP are
+ * just equal-spacing shortcuts of the same LGRINT/HRMINT algorithms).
  */
 import { parseDaf } from './daf.js';
 import { evaluate, evaluateWithDerivative } from './math/chebyshev.js';
 import { selectRecord } from './math/chebyshevRecord.js';
+import { selectEqualStepWindow, selectUnequalStepWindow } from './math/interpolatedRecord.js';
+import { lagrangeInterpolate, hermiteInterpolate } from './math/lagrangeHermite.js';
 import { add, sub, scale, cross, norm, unit, rotateAboutAxis } from './math/vector3.js';
 import { globalPool } from './pool.js';
 import { frameId as resolveFrameId, frameCenter, rotateState } from './frames.js';
@@ -42,7 +52,7 @@ import { bodyCode } from './bodies.js';
 
 const SPK_ND = 2;
 const SPK_NI = 6;
-const SUPPORTED_TYPES = new Set([2, 3]);
+const SUPPORTED_TYPES = new Set([2, 3, 8, 9, 12, 13]);
 
 const CLIGHT_KM_S = 299792.458; // exact, by SI definition of the meter
 const MAX_CHAIN_HOPS = 20; // matches NAIF's own CHLEN (spkgeo.f)
@@ -55,7 +65,11 @@ const SSB = 0;
  */
 export function loadSpk(buffer) {
   const daf = parseDaf(buffer);
-  if (!daf.idWord.startsWith('DAF/SPK')) {
+  // "NAIF/DAF" is a generic, older ID word real CSPICE still accepts
+  // as SPK data (several of NAIF's own real distributed kernels, e.g.
+  // the DSN station-position SPKs, use it) -- see kernels.js's furnsh()
+  // for the shape-based (ND=2,NI=6) disambiguation from PCK/CK.
+  if (!daf.idWord.startsWith('DAF/SPK') && !daf.idWord.startsWith('NAIF/DAF')) {
     throw new Error(`spk: not an SPK file (DAF ID word is "${daf.idWord}")`);
   }
   if (daf.nd !== SPK_ND || daf.ni !== SPK_NI) {
@@ -115,6 +129,34 @@ function evaluateType3(segment, et) {
   return { position, velocity };
 }
 
+/** Types 8/9 (Lagrange): all 6 state components are independently sampled and interpolated (spke08.c). */
+function evaluateLagrange(segment, et, selectWindow) {
+  const { epochs, states } = selectWindow(segment, et);
+  const position = [];
+  const velocity = [];
+  for (let axis = 0; axis < 6; axis++) {
+    const ys = states.map((state) => state[axis]);
+    const value = lagrangeInterpolate(epochs, ys, et);
+    (axis < 3 ? position : velocity).push(value);
+  }
+  return { position, velocity };
+}
+
+/** Types 12/13 (Hermite): only x/y/z are interpolated -- each call also yields that axis's velocity (spke12.c). */
+function evaluateHermite(segment, et, selectWindow) {
+  const { epochs, states } = selectWindow(segment, et);
+  const position = [];
+  const velocity = [];
+  for (let axis = 0; axis < 3; axis++) {
+    const ys = states.map((state) => state[axis]);
+    const dys = states.map((state) => state[axis + 3]);
+    const { value, derivative } = hermiteInterpolate(epochs, ys, dys, et);
+    position.push(value);
+    velocity.push(derivative);
+  }
+  return { position, velocity };
+}
+
 /**
  * Evaluate a segment at `et` (TDB seconds past J2000), returning
  * `{ position: [x,y,z], velocity: [vx,vy,vz] }` in km and km/s, in
@@ -122,13 +164,25 @@ function evaluateType3(segment, et) {
  * frame transform is applied.
  */
 export function evaluateSegment(segment, et) {
-  if (!SUPPORTED_TYPES.has(segment.type)) {
-    throw new Error(
-      `spk: segment data type ${segment.type} is not supported yet (only types 2 and 3 -- Chebyshev ` +
-        'position and position+velocity -- are implemented)'
-    );
+  switch (segment.type) {
+    case 2:
+      return evaluateType2(segment, et);
+    case 3:
+      return evaluateType3(segment, et);
+    case 8:
+      return evaluateLagrange(segment, et, selectEqualStepWindow);
+    case 9:
+      return evaluateLagrange(segment, et, selectUnequalStepWindow);
+    case 12:
+      return evaluateHermite(segment, et, selectEqualStepWindow);
+    case 13:
+      return evaluateHermite(segment, et, selectUnequalStepWindow);
+    default:
+      throw new Error(
+        `spk: segment data type ${segment.type} is not supported yet (supported: 2, 3 -- Chebyshev; ` +
+          '8, 9 -- Lagrange; 12, 13 -- Hermite)'
+      );
   }
-  return segment.type === 2 ? evaluateType2(segment, et) : evaluateType3(segment, et);
 }
 
 /**

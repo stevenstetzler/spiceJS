@@ -29,6 +29,17 @@ test('parses "@" date literals into continuous seconds', () => {
   assert.equal(out[0].values[0], calendarToSeconds(1972, 1, 1));
 });
 
+test('parses "=" and "+=" with no surrounding whitespace (real gm_de440.tpc: "BODY000_GMLIST= (...")', () => {
+  const out = parseAssignments(`\\begindata\nBODY000_GMLIST= ( 1 2 3 )\nLIST+=( 4 5 )\n\\begintext\n`);
+  assert.deepEqual(out[0], { name: 'BODY000_GMLIST', values: [1, 2, 3], append: false });
+  assert.deepEqual(out[1], { name: 'LIST', values: [4, 5], append: true });
+});
+
+test('does not mistake a number\'s "+" exponent sign for the start of a "+=" operator', () => {
+  const out = parseAssignments(`\\begindata\nX = 1.5E+10\n\\begintext\n`);
+  assert.deepEqual(out, [{ name: 'X', values: [1.5e10], append: false }]);
+});
+
 test('honors the += append operator', () => {
   const out = parseAssignments(`\\begindata\nLIST = ( 1, 2 )\nLIST += ( 3, 4 )\n\\begintext\n`);
   assert.equal(out.length, 2);

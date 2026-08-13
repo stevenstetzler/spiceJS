@@ -81,6 +81,107 @@ for (const type of [2, 3]) {
   });
 }
 
+// Linear motion (position(t) = P0 + V0*t) through *any* window of >= 2
+// states is reconstructed exactly by Lagrange or Hermite interpolation
+// (both are exact for degree-1 data), regardless of exactly which
+// states NAIF's/spiceJS's window-selection rule happens to pick --
+// same trick linearMotionSegment() above uses for the Chebyshev types.
+function linearMotionStates({ n = 8, begin = -500, step = 200, epochs = null } = {}) {
+  const p0 = [1000, 2000, 3000];
+  const v0 = [1, -2, 0.5]; // km/s
+  const ets = epochs || Array.from({ length: n }, (_, i) => begin + i * step);
+  const states = ets.map((t) => [...p0.map((p, ax) => p + v0[ax] * t), ...v0]);
+  return { ets, states, expectedStateAt: (et) => ({ position: p0.map((p, ax) => p + v0[ax] * et), velocity: v0 }) };
+}
+
+function equalStepSegment({ type, target = 499, center = 10, degree = 3 } = {}) {
+  const { ets, states, expectedStateAt } = linearMotionStates({});
+  return {
+    target,
+    center,
+    frame: 1,
+    type,
+    startEt: ets[0],
+    stopEt: ets[ets.length - 1],
+    begin: ets[0],
+    step: ets[1] - ets[0],
+    degree,
+    states,
+    expectedStateAt,
+  };
+}
+
+function unequalStepSegment({ type, target = 499, center = 10, degree = 3 } = {}) {
+  const epochs = [-500, -300, -100, 50, 200, 450, 700, 900]; // deliberately non-uniform
+  const { ets, states, expectedStateAt } = linearMotionStates({ epochs });
+  return {
+    target,
+    center,
+    frame: 1,
+    type,
+    startEt: ets[0],
+    stopEt: ets[ets.length - 1],
+    degree,
+    states,
+    epochs: ets,
+    expectedStateAt,
+  };
+}
+
+for (const [type, build] of [
+  [8, equalStepSegment],
+  [9, unequalStepSegment],
+]) {
+  test(`type ${type}: Lagrange-interpolated linear motion matches the analytic answer exactly`, () => {
+    const seg = build({ type });
+    const [segment] = loadSpk(writeSpk({ segments: [seg] }));
+    for (const et of [-500, -137, 0, 63, 640, 900]) {
+      const { position, velocity } = evaluateSegment(segment, et);
+      const expected = seg.expectedStateAt(et);
+      position.forEach((p, i) => closeTo(p, expected.position[i], 1e-6));
+      velocity.forEach((v, i) => closeTo(v, expected.velocity[i], 1e-6));
+    }
+  });
+}
+
+for (const [type, build] of [
+  [12, equalStepSegment],
+  [13, unequalStepSegment],
+]) {
+  test(`type ${type}: Hermite-interpolated linear motion matches the analytic answer exactly`, () => {
+    const seg = build({ type });
+    const [segment] = loadSpk(writeSpk({ segments: [seg] }));
+    for (const et of [-500, -137, 0, 63, 640, 900]) {
+      const { position, velocity } = evaluateSegment(segment, et);
+      const expected = seg.expectedStateAt(et);
+      position.forEach((p, i) => closeTo(p, expected.position[i], 1e-6));
+      velocity.forEach((v, i) => closeTo(v, expected.velocity[i], 1e-6));
+    }
+  });
+}
+
+test('type 8/12 window selection clamps at the segment edges instead of running out of bounds', () => {
+  // degree=3 (window of 4) with only 8 states total -- requesting ET
+  // right at the first/last epoch must still produce a full, in-bounds window.
+  for (const type of [8, 12]) {
+    const seg = equalStepSegment({ type, degree: 3 });
+    const [segment] = loadSpk(writeSpk({ segments: [seg] }));
+    for (const et of [seg.startEt, seg.stopEt]) {
+      const { position, velocity } = evaluateSegment(segment, et);
+      const expected = seg.expectedStateAt(et);
+      position.forEach((p, i) => closeTo(p, expected.position[i], 1e-6));
+      velocity.forEach((v, i) => closeTo(v, expected.velocity[i], 1e-6));
+    }
+  }
+});
+
+test('writeSpk rejects a type 9/13 segment with more than 100 states', () => {
+  const states = Array.from({ length: 101 }, (_, i) => [i, 0, 0, 0, 0, 0]);
+  const epochs = states.map((_, i) => i * 60);
+  const seg = { target: 499, center: 10, frame: 1, type: 9, startEt: 0, stopEt: 6000, degree: 3, states, epochs };
+  assert.throws(() => writeSpk({ segments: [seg] }), /capped at 100 states/);
+});
+
 test('multi-record segments select the correct record by ET', () => {
   // record 1: position(t) = t, for t in [0, 100]           (v = +1 km/s)
   // record 2: position(t) = 200 - t, for t in [100, 200]   (v = -1 km/s)
@@ -110,10 +211,11 @@ test('multi-record segments select the correct record by ET', () => {
 });
 
 test('evaluateSegment rejects unsupported segment types', () => {
-  const seg = linearMotionSegment({ type: 5 });
-  const buf = writeSpk({ segments: [seg] });
-  const [segment] = loadSpk(buf);
-  assert.throws(() => evaluateSegment(segment, 0), /type 5 is not supported/);
+  // Type 5 (two-body/Keplerian propagation) is a deliberately
+  // out-of-scope type -- writeSpk() (the test helper) doesn't even
+  // know how to write one, so construct just enough of a segment
+  // object to reach evaluateSegment()'s own type dispatch directly.
+  assert.throws(() => evaluateSegment({ type: 5 }, 0), /type 5 is not supported/);
 });
 
 test('findSegment / spkState: direct lookup, with helpful errors', () => {

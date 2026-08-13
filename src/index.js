@@ -5,4 +5,5 @@ export { et2utc, et2utcCalendar } from './et2utc.js';
 export { spkState, spkSegments, spkez, spkezr } from './spk.js';
 export { pckSegments } from './pck.js';
 export { bodyCode } from './bodies.js';
+export { bodyValues } from './bodyConstants.js';
 export { frameId } from './frames.js';

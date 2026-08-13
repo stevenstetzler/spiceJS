@@ -19,11 +19,19 @@
 import { parseAtLiteral } from './time/calendar.js';
 
 // Matches, in priority order: a quoted string, a paren, the += or =
-// operators, or a run of non-whitespace/non-paren/non-comma
-// characters (numbers, bare identifiers, @-literals). Commas are not
-// matched by anything and so act as token separators, same as
-// whitespace.
-const TOKEN_RE = /'(?:[^']|'')*'|\(|\)|\+=|=|[^\s(),]+/g;
+// operators, or a run of non-whitespace/non-paren/non-comma/non-equals
+// characters that also never *starts* a "+=" (numbers, bare
+// identifiers, @-literals). Commas are not matched by anything and so
+// act as token separators, same as whitespace.
+//
+// The catch-all excludes bare `=` outright (never legal mid-token) and
+// stops before `+=` specifically via a lookahead -- NOT by excluding
+// `+` outright, which would also wrongly split a number's exponent
+// sign (e.g. "1.5E+10"). This split-before-the-operator behavior is
+// needed even with no surrounding whitespace at all -- confirmed
+// necessary against two spots in a real NAIF-distributed kernel
+// (gm_de440.tpc's `BODY000_GMLIST= (...`, no space before `=`).
+const TOKEN_RE = /'(?:[^']|'')*'|\(|\)|\+=|=|(?:(?!\+=)[^\s(),=])+/g;
 
 /** Split raw text-kernel content into just its \begindata text. */
 function extractDataText(content) {

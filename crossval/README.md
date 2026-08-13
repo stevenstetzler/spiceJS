@@ -3,11 +3,13 @@
 `spiceypy` wraps the real CSPICE library, so it's the closest thing to
 ground truth we can check spiceJS against without network access to
 naif.jpl.nasa.gov. This directory cross-checks `str2et()`, `spkez()`,
-and `spkezr()` against it, case by case, on a synthetic kernel both
-sides load identically, plus `crossval/pck00010.tpc` -- NAIF's own
-publicly distributed generic text PCK, used (unmodified) to exercise
-the classic body-fixed orientation formula (`src/bodyOrientation.js`)
-against real constants, not just synthetic ones.
+`spkezr()`, `spkState()`, and `bodyValues()` against it, case by case,
+on a synthetic kernel both sides load identically, plus several of
+NAIF's own real, unmodified, publicly distributed kernels checked in
+here: `pck00010.tpc`/`pck00011.tpc` (generic text PCK constants),
+`gm_de440.tpc` (body GM values), and `dss17.bsp` (a real, tiny
+station-position SPK, used to validate segment-type reading and DAF
+ID-word handling against genuine binary data, not just synthetic).
 
 ## Prerequisites
 
@@ -32,9 +34,11 @@ exist.
 This is **not** part of `npm test` -- it requires Python and
 `spiceypy` installed, which the main test suite deliberately doesn't
 depend on. Run it after any change to `src/time/`, `src/spk.js`,
-`src/pck.js`, `src/daf.js`, `src/bodies.js`, `src/frames.js`,
-`src/bodyOrientation.js`, `src/math/eulerFrame.js`, `src/data/*.js`, or
-the underlying byte-format understanding in
+`src/pck.js`, `src/daf.js`, `src/bodies.js`, `src/bodyConstants.js`,
+`src/frames.js`, `src/bodyOrientation.js`, `src/kernels.js`,
+`src/math/eulerFrame.js`, `src/math/interpolatedRecord.js`,
+`src/math/lagrangeHermite.js`, `src/data/*.js`, or the underlying
+byte-format understanding in
 `test/helpers/writeSpk.js`/`test/helpers/writePck.js`.
 
 ## Notes on what this does and doesn't cover
@@ -67,9 +71,25 @@ the underlying byte-format understanding in
   catastrophic cancellation, not imprecision, and comparing that
   component against its own tiny magnitude would flag ordinary
   float64 rounding noise as a mismatch. This is also how two real
-  bugs were found and fixed in this round: `spkez()`'s stellar
+  bugs were found and fixed in a previous round: `spkez()`'s stellar
   aberration divided by zero for a target sitting exactly at the
   observer's position, and a non-inertial `ref` frame centered on
   neither the target nor the observer needs its orientation evaluated
   at a light-time-adjusted epoch (NAIF's `spkez.c`) that itself varies
   with `et`, which the original fixed-epoch analytic rotation missed.
+- `dss17.bsp`'s target (a DSN station) reaches the SSB through Earth in
+  its own native frame (`ITRF93`), then a further Earth-to-SSB hop in
+  J2000 in the synthetic kernel -- `spkez()`/`spkezr()` always chain a
+  target all the way to the SSB and spiceJS doesn't rotate between
+  frames mid-chain, so that specific combination is (correctly)
+  rejected. `spkStateCases` compare `spkState()` (a direct, non-
+  chaining lookup) against spiceypy's `spkgeo` instead, which is what's
+  actually being validated here (the type 8 reader and the `NAIF/DAF`
+  routing fix) -- see gen-cases.mjs's comment on `spkStateCases` for
+  the full reasoning.
+- Real kernels are also what caught two more bugs this round: `furnsh()`
+  rejected legitimate SPK/PCK files using the older, generic `NAIF/DAF`
+  ID word instead of `DAF/SPK`/`DAF/PCK` (`dss17.bsp` is one such file;
+  real CSPICE still loads it, confirmed empirically); and the text-
+  kernel tokenizer required whitespace around `=`, which
+  `gm_de440.tpc` doesn't always have (`BODY000_GMLIST= (...`).

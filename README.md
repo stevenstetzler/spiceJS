@@ -38,16 +38,24 @@ Supported today:
 - Loading **binary PCK** (body orientation) kernels (`pckSegments()`),
   used for the time-varying, angular-velocity-aware half of body-fixed
   frame support above.
+- SPK segment types 2/3 (Chebyshev), **8/9 (Lagrange)**, and **12/13
+  (Hermite)** -- covers essentially every publicly distributed
+  planetary/lunar/satellite kernel and most spacecraft/station ones.
+  `furnsh()` also accepts the older, generic `NAIF/DAF` ID word some
+  real kernels use instead of `DAF/SPK`/`DAF/PCK` (routed by summary
+  shape instead of the ID word text, matching real CSPICE).
+- Reading arbitrary body constants from a loaded text PCK (e.g.
+  `BODY399_RADII`, `BODY399_GM`) with `bodyValues(body, item)`.
 
 Not yet supported (all fail with a clear error, not a silent wrong
 answer):
 - Other binary kernels (CK) and DAS-based kernels (DSK) -- CK shares
   SPK/PCK's DAF container (`src/daf.js`) and is a natural next step;
   DSK is a different container format entirely.
-- SPK/PCK segment types other than 2 (and, for SPK, 3) -- Chebyshev
-  covers the vast majority of publicly distributed planetary/lunar
-  kernels, but not e.g. spacecraft kernels using Lagrange/Hermite
-  interpolation (types 5, 8/9/12/13).
+- SPK/PCK segment type 5 (discrete two-body/Keplerian propagation) --
+  unlike the interpolated types above, this needs a genuinely new
+  two-body propagator, and is rare in real kernels (superseded by
+  9/13 in practice).
 - CK (spacecraft-orientation), dynamic, and switch reference frames,
   and the one built-in class 4 frame in NAIF's table (`EARTH_FIXED`, a
   hardcoded ITRF93-relative frame, not PCK-driven). A mismatched frame
@@ -209,6 +217,9 @@ a loaded segment whose `(target, center)` match exactly (use
 `spkSegments()` to see what's available). For most generic planetary
 kernels this covers the common cases directly (e.g. any planet
 relative to the SSB, the Moon relative to the Earth-Moon barycenter).
+Segment types 2/3 (Chebyshev), 8/9 (Lagrange), and 12/13 (Hermite) are
+all supported transparently -- `spkState()`/`spkez()`/`spkezr()` don't
+need to know which one a given segment uses.
 
 For an arbitrary target/observer pair, use `spkez()` -- it's SPICE's
 `spkez_c`: it chains through intermediate bodies back to the Solar
@@ -336,6 +347,23 @@ Both orientation formula, both binary PCK types, and the TK frame math
 against real NAIF-distributed kernels and cross-checked against
 spiceypy loading the *same* files, not just synthetic fixtures -- see
 `crossval/pck00010.tpc`.
+
+## Body constants
+
+Any `BODY<id>_<ITEM>` value from a loaded text PCK -- radii, GM, or
+anything else a given kernel defines -- is available via `bodyValues()`
+(NAIF's `bodvcd_c`/`bodvrd_c`, unified into one function since there's
+no chaining involved that would justify separate ID- and name-based
+entry points the way `spkez()`/`spkezr()` have):
+
+```js
+import { furnsh, bodyValues } from './src/index.js';
+
+furnsh('/path/to/pck00011.tpc');
+
+bodyValues(399, 'RADII');   // => [6378.1366, 6378.1366, 6356.7519]
+bodyValues('EARTH', 'GM');  // by name too, same resolution rules as spkezr()
+```
 
 ## Development
 

@@ -54,7 +54,13 @@ export function parseFileRecord(buffer) {
     throw new Error('daf: file is too small to contain a DAF file record');
   }
   const idWord = readAscii(buffer, 0, 8);
-  if (!idWord.startsWith('DAF/')) {
+  // "NAIF/DAF" is a real, older, generic ID word -- several of NAIF's
+  // own publicly distributed kernels (e.g. the DSN station-position
+  // SPKs) use it instead of a type-specific word like "DAF/SPK". Real
+  // CSPICE still reads these (confirmed empirically), so this generic
+  // reader accepts it too; the caller (e.g. spk.js/pck.js/kernels.js)
+  // is responsible for further narrowing by summary shape or content.
+  if (!idWord.startsWith('DAF/') && idWord !== 'NAIF/DAF') {
     throw new Error(`daf: not a DAF file (expected an ID word starting with "DAF/", got "${idWord}")`);
   }
 

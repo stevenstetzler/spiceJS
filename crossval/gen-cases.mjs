@@ -53,14 +53,80 @@ function linearType3({ target, center, p0, v0 }) {
   };
 }
 
+// Linear-motion states for the interpolated types (8/9/12/13) --
+// exactly reconstructed by Lagrange/Hermite interpolation regardless
+// of which states end up in the window (see test/spk.test.js), so
+// only agreement with real CSPICE is actually being tested here, same
+// reasoning as linearType2/3 above.
+function linearStates({ p0, v0, n, ets }) {
+  return ets.map((t) => [...p0.map((p, i) => p + v0[i] * t), ...v0]);
+}
+
+function interpolatedSegment({ target, center, type, p0, v0, ets, degree }) {
+  return {
+    target,
+    center,
+    frame: 1,
+    type,
+    startEt: ets[0],
+    stopEt: ets[ets.length - 1],
+    ...(type === 8 || type === 12
+      ? { begin: ets[0], step: ets[1] - ets[0] }
+      : { epochs: ets }),
+    degree,
+    states: linearStates({ p0, v0, ets }),
+  };
+}
+
+const EQUAL_STEP_ETS = Array.from({ length: 8 }, (_, i) => -RADIUS + (i * (2 * RADIUS)) / 7);
+const UNEQUAL_STEP_ETS = [-RADIUS, -0.6 * RADIUS, -0.1 * RADIUS, 0.05 * RADIUS, 0.4 * RADIUS, 0.7 * RADIUS, RADIUS];
+
 // 499 ("Mars") rel. 10 ("Sun"); 10 rel. 0 (SSB, nonzero velocity so
 // stellar aberration isn't a degenerate no-op); 399 ("Earth", type 3)
 // direct rel. SSB; 301 ("Moon") rel. 399, three hops from the SSB.
+// 599/699/799/899 (unused real planet IDs, borrowed as convenient
+// distinct target codes) rel. 10, one each of types 8/9/12/13.
 const segments = [
   linearType2({ target: 499, center: 10, p0: [2.2e8, 1.5e8, 5e6], v0: [15, -8, 3] }),
   linearType2({ target: 10, center: 0, p0: [0, 0, 0], v0: [0.01, -0.005, 0.002] }),
   linearType3({ target: 399, center: 0, p0: [1.47e8, 0, 0], v0: [0, 29.8, 0] }),
   linearType2({ target: 301, center: 399, p0: [3.8e5, 0, 0], v0: [0, 1.0, 0.1] }),
+  interpolatedSegment({
+    target: 599,
+    center: 10,
+    type: 8,
+    p0: [7.8e8, -3.2e8, 1.2e7],
+    v0: [-13, -12, 0.2],
+    ets: EQUAL_STEP_ETS,
+    degree: 3,
+  }),
+  interpolatedSegment({
+    target: 699,
+    center: 10,
+    type: 9,
+    p0: [1.4e9, 2.0e8, -4.5e7],
+    v0: [-3, 9, -0.1],
+    ets: UNEQUAL_STEP_ETS,
+    degree: 3,
+  }),
+  interpolatedSegment({
+    target: 799,
+    center: 10,
+    type: 12,
+    p0: [2.9e9, -6.0e8, 2.0e7],
+    v0: [1.4, 6.5, -0.05],
+    ets: EQUAL_STEP_ETS,
+    degree: 3,
+  }),
+  interpolatedSegment({
+    target: 899,
+    center: 10,
+    type: 13,
+    p0: [4.5e9, 1.0e9, -1.0e8],
+    v0: [-0.5, 5.4, 0.03],
+    ets: UNEQUAL_STEP_ETS,
+    degree: 3,
+  }),
 ];
 
 fs.writeFileSync(path.join(fixturesDir, 'kernel.bsp'), writeSpk({ segments }));
@@ -80,6 +146,21 @@ for (const et of ets) {
 // Self state and a Type-3-only lookup, NONE correction is enough to prove those paths.
 spkezCases.push({ target: 399, center: 399, et: 0, abcorr: 'NONE' });
 spkezCases.push({ target: 399, center: 0, et: 1.0e6, abcorr: 'NONE' });
+
+// Types 8/9 (Lagrange) and 12/13 (Hermite) -- direct lookups (abcorr
+// variety) plus one chained-through-10 case each, proving the
+// interpolated types work inside spkez's full pipeline (chaining +
+// aberration correction), not just via a bare evaluateSegment() call.
+for (const et of ets) {
+  for (const abcorr of abcorrs) {
+    spkezCases.push({ target: 599, center: 10, et, abcorr }); // type 8
+    spkezCases.push({ target: 699, center: 10, et, abcorr }); // type 9
+    spkezCases.push({ target: 799, center: 10, et, abcorr }); // type 12
+    spkezCases.push({ target: 899, center: 10, et, abcorr }); // type 13
+  }
+  spkezCases.push({ target: 599, center: 0, et, abcorr: 'LT+S' }); // chained via 10
+  spkezCases.push({ target: 899, center: 0, et, abcorr: 'CN+S' });
+}
 
 // ref: rotate into a handful of the 21 built-in inertial frames --
 // this is what actually proves the extracted rotation matrices and
@@ -126,6 +207,39 @@ for (const et of [0, 2500000]) {
 }
 spkezrCases.push({ target: 'NOT_A_REAL_BODY', observer: '0', et: 0, abcorr: 'NONE', ref: 'J2000' });
 
+// dss17.bsp: a real, NAIF-distributed SPK (station position), type 8,
+// using the generic "NAIF/DAF" ID word -- both sides furnsh it too
+// (see run-js.mjs/run-py.py). Its target (399017) reaches the SSB
+// through Earth (399) in its own native frame ITRF93, then a further
+// hop from Earth to the SSB in J2000 -- spkez()/spkezr() always
+// chains a target all the way to the SSB, and spiceJS doesn't support
+// rotating between frames mid-chain, so those (correctly) reject this
+// specific body combination. Real CSPICE's own spkgeo_ instead finds
+// the shortest path (here, the single direct segment, since the
+// requested "observer" *is* the target's segment-native center) --
+// spkState() is spiceJS's equivalent direct, non-chaining lookup, so
+// that's what's compared here (against spiceypy's spkgeo), which is
+// exactly what's actually being validated: the type 8 reader and the
+// NAIF/DAF routing fix, against real data instead of only synthetic.
+const spkStateCases = [
+  { target: 399017, center: 399, et: 0, ref: 'ITRF93' },
+  { target: 399017, center: 399, et: 500000000, ref: 'ITRF93' },
+];
+
+// bodyValues: real BODY#_RADII/_GM constants from NAIF's own
+// pck00011.tpc/gm_de440.tpc (both sides furnsh them -- see run-js.mjs/
+// run-py.py), cross-checked against spiceypy's bodvrd.
+const bodyValueCases = [
+  { body: 399, item: 'RADII' },
+  { body: 'EARTH', item: 'RADII' },
+  { body: 301, item: 'RADII' },
+  { body: 499, item: 'RADII' },
+  { body: 399, item: 'GM' },
+  { body: 'MARS BARYCENTER', item: 'GM' },
+  { body: 10, item: 'GM' },
+  { body: 399, item: 'NOT_A_REAL_ITEM' },
+];
+
 const str2etCases = [
   '2000-01-01T12:00:00',
   '2000-01-01T12:00:00 TDB',
@@ -151,8 +265,9 @@ const str2etCases = [
 
 fs.writeFileSync(
   path.join(fixturesDir, 'cases.json'),
-  JSON.stringify({ str2etCases, spkezCases, spkezrCases }, null, 2)
+  JSON.stringify({ str2etCases, spkezCases, spkezrCases, spkStateCases, bodyValueCases }, null, 2)
 );
 
 console.log(`Wrote kernel.bsp (${segments.length} segments) and cases.json ` +
-  `(${str2etCases.length} str2et cases, ${spkezCases.length} spkez cases, ${spkezrCases.length} spkezr cases).`);
+  `(${str2etCases.length} str2et cases, ${spkezCases.length} spkez cases, ${spkezrCases.length} spkezr cases, ` +
+  `${spkStateCases.length} spkState cases, ${bodyValueCases.length} bodyValues cases).`);

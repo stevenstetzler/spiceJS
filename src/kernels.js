@@ -12,6 +12,7 @@ import { globalPool, KernelPool } from './pool.js';
 import { loadTextKernel } from './textKernel.js';
 import { loadSpk } from './spk.js';
 import { loadPck } from './pck.js';
+import { parseFileRecord } from './daf.js';
 
 // Per-pool record of what furnsh() loaded from each file, so unload()
 // can undo it. Keyed by pool identity so isolated pools (e.g. in
@@ -105,7 +106,38 @@ export function furnsh(filePath, pool = globalPool) {
     return;
   }
 
-  if (magic.startsWith('DAF/') || magic.startsWith('NAIF/DAF')) {
+  // Older/generic SPK and PCK files (including several of NAIF's own
+  // real, publicly distributed ones -- e.g. the DSN station-position
+  // kernels) use the generic "NAIF/DAF" ID word instead of "DAF/SPK"/
+  // "DAF/PCK". Real CSPICE still loads these as SPK/PCK data (confirmed
+  // empirically against spiceypy), so route by the parsed summary
+  // shape instead of the ID word text: SPK is ND=2,NI=6, PCK is
+  // ND=2,NI=5. (CK also happens to be ND=2,NI=6 -- shape alone can't
+  // tell it apart from SPK -- but CK isn't supported yet regardless,
+  // so a CK file under this generic word will just fail loudly inside
+  // loadSpk/evaluateSegment on an unrecognized segment type, not
+  // silently misbehave.)
+  if (magic.startsWith('NAIF/DAF')) {
+    const { nd, ni } = parseFileRecord(buffer);
+    if (nd === 2 && ni === 6) {
+      const segments = loadSpk(buffer);
+      pool.addSpkSegments(segments);
+      registryFor(pool).set(absPath, { type: 'spk', segments });
+      return;
+    }
+    if (nd === 2 && ni === 5) {
+      const segments = loadPck(buffer);
+      pool.addPckSegments(segments);
+      registryFor(pool).set(absPath, { type: 'pck', segments });
+      return;
+    }
+    throw new Error(
+      `furnsh: "${filePath}" is a generic binary DAF (ID word "${magic.trim()}") with summary shape ` +
+        `ND=${nd}, NI=${ni}, which doesn't match a supported SPK (ND=2, NI=6) or PCK (ND=2, NI=5) shape.`
+    );
+  }
+
+  if (magic.startsWith('DAF/')) {
     throw new Error(
       `furnsh: "${filePath}" is a binary SPICE kernel (${magic.trim()}). Only binary SPK and PCK kernels ` +
         'are supported so far -- other binary kernels (CK, ...) are not.'

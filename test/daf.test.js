@@ -40,6 +40,15 @@ test('parseFileRecord rejects a non-DAF file', () => {
   assert.throws(() => parseFileRecord(buf), /not a DAF file/);
 });
 
+test('parseFileRecord accepts the generic "NAIF/DAF" ID word (used by real, older SPK/PCK files)', () => {
+  const buf = writeSpk({ segments: [linearSegment()] });
+  buf.write('NAIF/DAF', 0, 'latin1');
+  const fr = parseFileRecord(buf);
+  assert.equal(fr.idWord, 'NAIF/DAF');
+  assert.equal(fr.nd, 2);
+  assert.equal(fr.ni, 6);
+});
+
 test('parseDaf decodes summaries into dc/ic arrays', () => {
   const buf = writeSpk({
     segments: [linearSegment({ target: 499, center: 10, frame: 17, type: 2, startEt: -10, stopEt: 90 })],
