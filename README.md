@@ -530,7 +530,10 @@ verified against the real, NAIF-distributed file, matching `spiceypy`
 to full double precision. See `docs/lazy-loading.md` for the full
 scoping (the byte-range math per segment type, the architecture
 decision, and real numbers this claim is based on) and its
-implementation status.
+implementation status, and `npm run perf` (`perf/README.md`) for a
+reproducible benchmark across multiple bodies (Earth/Moon/Jupiter/
+Neptune) and time ranges (a day through the full ~1100-year de440
+span) against the real `de440.bsp`.
 
 `prefetch()` is incremental (already-fetched bytes are never
 re-fetched) and idempotent (already-registered segments are never
@@ -583,6 +586,7 @@ node examples/basic.mjs
 node examples/spk.mjs
 node examples/pck.mjs
 npm run crossval  # cross-validates str2et/spkez/spkezr against spiceypy (needs `pip install spiceypy`) -- see crossval/README.md
+npm run perf      # benchmarks openRemoteSpk()'s network savings + accuracy against the real de440.bsp -- see perf/README.md
 ```
 
 `src/data/bodyIds.js`, `src/data/inertialFrames.js`, and

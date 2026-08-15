@@ -17,7 +17,8 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js test/*/*.test.js",
-    "crossval": "node crossval/gen-cases.mjs && node crossval/run-js.mjs && python3 crossval/run-py.py && node crossval/compare.mjs"
+    "crossval": "node crossval/gen-cases.mjs && node crossval/run-js.mjs && python3 crossval/run-py.py && node crossval/compare.mjs",
+    "perf": "node perf/benchmark.mjs && python3 perf/spiceypy-reference.py && node perf/report.mjs"
   },
   "files": [
     "src"

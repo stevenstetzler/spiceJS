@@ -13,6 +13,13 @@ HTTP requests, 285,696 bytes (0.87% of the 32,726,016-byte file)**,
 result matching `spiceypy` to full double precision. See "What actually
 shipped" below the phase-by-phase plan for the handful of things that
 came out slightly differently than originally sketched here, and why.
+A broader, reproducible benchmark (`npm run perf`, see `perf/README.md`)
+covers Earth/Moon/Jupiter/Neptune over 1 day through the full de440
+range (~1100 years) against the real `de440.bsp`: 99.4-99.84% network
+reduction for narrow windows, 65-98% even for the full time range
+(only the 2-3 of the file's 14 segments relevant to a given body are
+ever touched), every sampled state within `1e-6`-`1e-7` km of real
+CSPICE (float64 noise, not a discrepancy).
 
 This started as a scoping document for `docs/browser-support.md` §3.6
 (block-aligned lazy/range loading). It works through the concrete
