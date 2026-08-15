@@ -96,3 +96,33 @@ test('readWords reads a 1-based inclusive address range', () => {
   // record: [mid=50, radius=50, X0=1000, X1=10, Y0=2000, Y1=20, Z0=3000, Z1=30], then epilog [0, 100, 8, 1]
   assert.deepEqual(Array.from(words), [50, 50, 1000, 10, 2000, 20, 3000, 30, 0, 100, 8, 1]);
 });
+
+// A regression test for the specific hazard the DataView port has to
+// avoid (see daf.js's doc comment): every read here has to be
+// relative to the *view's own* start, not the start of some larger
+// backing ArrayBuffer it happens to share. Node's own small-Buffer
+// pooling produces exactly this shape (many small Buffers are views
+// with a nonzero byteOffset into one shared, larger ArrayBuffer) --
+// simulate it directly by embedding the DAF bytes at a nonzero offset
+// inside a bigger buffer and passing only the inner view. A byteOffset
+// bug would silently shift every read by a constant, not throw, so
+// this checks exact values, not just "it doesn't crash".
+test('reading works correctly from a Uint8Array view with a nonzero byteOffset into a larger buffer', () => {
+  const buf = writeSpk({ segments: [linearSegment()] });
+  const padding = 137; // arbitrary, deliberately not a multiple of 8 (a word) or 1024 (a record)
+  const padded = new Uint8Array(padding + buf.byteLength + 64);
+  padded.set(buf, padding);
+  const view = padded.subarray(padding, padding + buf.byteLength);
+
+  const fr = parseFileRecord(view);
+  assert.equal(fr.idWord, 'DAF/SPK');
+  assert.equal(fr.nd, 2);
+  assert.equal(fr.ni, 6);
+
+  const daf = parseDaf(view);
+  assert.equal(daf.summaries.length, 1);
+  const { ic } = daf.summaries[0];
+  const [, , , , startAddr, endAddr] = ic;
+  const words = readWords(view, true, startAddr, endAddr);
+  assert.deepEqual(Array.from(words), [50, 50, 1000, 10, 2000, 20, 3000, 30, 0, 100, 8, 1]);
+});

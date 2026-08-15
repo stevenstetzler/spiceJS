@@ -36,7 +36,8 @@ This is **not** part of `npm test` -- it requires Python and
 depend on. Run it after any change to `src/time/`, `src/spk.js`,
 `src/pck.js`, `src/daf.js`, `src/bodies.js`, `src/bodyConstants.js`,
 `src/frames.js`, `src/bodyOrientation.js`, `src/kernels.js`,
-`src/prop2b.js`, `src/math/stumpff.js`, `src/math/eulerFrame.js`,
+`src/kernelBytes.js`, `src/metaKernel.js`, `src/prop2b.js`,
+`src/math/stumpff.js`, `src/math/eulerFrame.js`,
 `src/math/interpolatedRecord.js`, `src/math/lagrangeHermite.js`,
 `src/data/*.js`, or the underlying byte-format understanding in
 `test/helpers/writeSpk.js`/`test/helpers/writePck.js`.

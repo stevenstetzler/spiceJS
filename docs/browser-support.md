@@ -1,11 +1,23 @@
 # Running spiceJS in the browser
 
-This is an investigation, not an implementation -- nothing here is
-committed to `src/` yet. It answers three questions: what currently
-stops spiceJS from running in a browser at all, what stops it from
-loading kernels over the network, and what a local-cache layer should
-look like. It ends with a phased plan and a short list of decisions
-that need a call before writing code.
+**Status: Phases 1-3 of §6's plan are implemented** (`daf.js`'s
+`DataView` port, `load()`, and the `cache.js` local-cache layer -- see
+the README's "Running in a browser" section for usage), plus one thing
+§6 didn't originally call for: a dedicated `src/browser.js` entry
+point (see §7's "Bundle/package shape" -- it turned out to be
+necessary, not optional, once actually verified against a real
+bundler). Phase 4 (block-aligned lazy/range loading, §3.6) remains a
+documented future direction, not implemented. The rest of this
+document is the original investigation and design, kept as-is for the
+rationale -- it now describes what was built, not just what was
+proposed.
+
+This started as an investigation, not an implementation. It answers
+three questions: what currently stops spiceJS from running in a
+browser at all, what stops it from loading kernels over the network,
+and what a local-cache layer should look like. It ends with a phased
+plan and a short list of decisions that needed a call before writing
+code (§7 -- all resolved now, recorded there for the record).
 
 ## 1. What's actually Node-specific today
 
@@ -425,19 +437,50 @@ Resolved by review (recorded here for the record, not still open):
 - **Reference proxy scope**: document a short example, don't ship or
   host one. See \S5.
 
-Still open, need a decision before/at Phase 3:
+Resolved during implementation (this was assumed rather than
+verified when this document was first written -- it turned out to be
+wrong as stated):
+
+- **Bundle/package shape**: plain ESM source, no build step, no
+  prebuilt bundle -- but *not* "just import from `index.js` and let
+  the bundler figure it out," which was the original assumption here.
+  Verified directly with a real `esbuild --platform=browser` build:
+  bundling `import { load } from '<package>'` where `<package>`
+  resolves to `src/index.js` **fails outright**, even though `load()`
+  itself has no Node dependency and `furnsh()` is never called --
+  because `index.js` is a barrel that also re-exports `furnsh()`/
+  `unload()`/`kclear()` from `kernels.js`, and a bundler has to
+  statically *resolve* every import reachable from a barrel's
+  re-exports (including `kernels.js`'s own `import fs from
+  'node:fs'`) before it can tree-shake anything unused -- resolution
+  fails immediately under a browser target, before tree-shaking ever
+  gets a chance to remove the dead `furnsh()` code path. Fix actually
+  shipped: a second, Node-free entry point (`src/browser.js`, everything
+  `index.js` has except `furnsh()`) wired in via `package.json`'s
+  `exports` `"browser"` condition (respected by Vite/webpack/esbuild
+  by default) plus a legacy top-level `"browser"` field and an explicit
+  `"./browser"` subpath export for bundlers that don't apply
+  conditions. Confirmed both directions with real builds: a
+  `node_modules`-symlinked package resolved via `esbuild
+  --platform=browser` produces zero `node:*` references, while plain
+  `node` (no bundler) resolves the same bare specifier to the
+  full `index.js`, `furnsh()` included. See the README's "Running in a
+  browser" section for the user-facing version of this.
+
+Resolved, but only by convention/documentation, not verified against
+a real backend the way the above was:
 
 - **Default cache backend**: IndexedDB (broadest support, right fit
   for the whole-file cache Phase 3 actually needs) vs. Cache API
   (better fit only if a same-origin proxy is also being built, so its
   `Response`-based revalidation is actually usable) -- see the table
-  in \S3.5. Recommendation: IndexedDB for Phase 3; OPFS becomes the
-  right choice specifically if/when \S3.6's block-based lazy loading
-  is built, not before.
-- **Bundle/package shape**: still ship as plain ESM source (as today,
-  no build step) and let bundlers (Vite/webpack/esbuild) handle it
-  directly -- or add a `browser` field / prebuilt bundle? Plain ESM
-  (no `fs`/`Buffer` left anywhere after \S3.1-3.2) should just work
-  with every modern bundler's default Node-polyfill-free browser
-  target, so a prebuilt bundle probably isn't needed, but worth
-  confirming against Vite once phase 1-2 land.
+  in \S3.5. Shipped: both `createMemoryCache()` and
+  `createIndexedDbCache()` (cache.js), so this wasn't really an
+  either/or in the end -- IndexedDB for browser persistence, memory
+  for tests/Node/no-persistence-needed cases. `createIndexedDbCache()`
+  is tested against a real IndexedDB implementation
+  (the `fake-indexeddb` polyfill, a devDependency) rather than only
+  hand-inspected, so its actual transaction/object-store logic is
+  exercised, not just its feature-detection error path. OPFS remains
+  unimplemented, as planned -- it's the right choice specifically
+  if/when \S3.6's block-based lazy loading is built, not before.

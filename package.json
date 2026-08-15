@@ -4,8 +4,13 @@
   "description": "A JavaScript library for working with NAIF SPICE kernels, starting with the kernel pool, FURNSH, and STR2ET.",
   "type": "module",
   "main": "src/index.js",
+  "browser": "src/browser.js",
   "exports": {
-    ".": "./src/index.js"
+    ".": {
+      "browser": "./src/browser.js",
+      "default": "./src/index.js"
+    },
+    "./browser": "./src/browser.js"
   },
   "engines": {
     "node": ">=18"
@@ -30,5 +35,8 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/stevenstetzler/spiceJS.git"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "^6.2.5"
   }
 }

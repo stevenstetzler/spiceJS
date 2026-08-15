@@ -52,6 +52,13 @@ Supported today:
   SPK type 5 implementation detail) -- propagates a state under pure
   Keplerian motion by `dt` seconds, uniformly across elliptical,
   parabolic, and hyperbolic orbits.
+- **Running in a browser**: `load()`, `furnsh()`'s async sibling, loads
+  a kernel from an http(s) URL, a `File`/`Blob` (a local-file picker or
+  drag-and-drop selection), or raw bytes, optionally through a local
+  cache (`createMemoryCache()`/`createIndexedDbCache()`). A bundler
+  targeting the browser resolves `import ... from 'spicejs'` to a
+  dedicated Node-free entry point automatically (`package.json`'s
+  `exports` "browser" condition) -- see "Running in a browser" below.
 
 Not yet supported (all fail with a clear error, not a silent wrong
 answer):
@@ -391,6 +398,106 @@ handful of states, and reading one at a given `et` means propagating
 the two bracketing states to `et` via `prop2b` and blending them with
 a cosine weight -- not interpolating stored samples, unlike every
 other supported SPK type.
+
+## Running in a browser
+
+`furnsh()` is deliberately synchronous and Node-only (`fs.readFileSync`
+under the hood), so it stays exactly as-is. `load()` is its async,
+environment-agnostic sibling for everything else -- an http(s) URL
+(fetched), a `File`/`Blob` (a `<input type="file">`/drag-and-drop
+selection, or the File System Access API), or raw
+`ArrayBuffer`/`Uint8Array` bytes:
+
+```js
+import { load, spkezr } from 'spicejs';
+
+await load('https://your-cors-enabled-host/naif0012.tls');
+await load('https://your-cors-enabled-host/de440s.bsp');
+
+spkezr('MARS', 'SSB', someEt, 'LT+S');
+```
+
+A kernel loaded via `load()` is unloadable via `unload()`, and
+forgotten by `kclear()`, exactly like one loaded via `furnsh()` -- both
+share the same per-pool load history.
+
+**Two entry points, resolved automatically.** `import ... from
+'spicejs'` in Node resolves to `src/index.js` (everything, including
+`furnsh()`); the same import in a browser-targeting bundler
+(Vite/webpack/esbuild) resolves instead to `src/browser.js` --
+everything *except* `furnsh()` -- via `package.json`'s `exports`
+`"browser"` condition, which every mainstream bundler honors by
+default. This isn't just a convenience wrapper: pulling `load()` in
+via `src/index.js` in a browser bundle would, despite `furnsh()` itself
+never being called, still fail to bundle at all -- a bundler has to
+*resolve* every static import reachable from a barrel file's
+re-exports (including `src/index.js`'s own `import fs from 'node:fs'`)
+before it can tree-shake anything unused, and `node:fs`/`node:path`
+don't exist in a browser. Verified directly with a real
+`esbuild --platform=browser` build, not just asserted -- importing
+straight from `src/browser.js` (or the package specifier, once a
+bundler applies the `"browser"` condition) produces a bundle with zero
+`node:*` references; importing the same names from `src/index.js`
+doesn't bundle for `browser` at all. If your bundler doesn't apply
+`exports` conditions for some reason, import `spicejs/browser` (a
+dedicated subpath export pointing at the same `src/browser.js`)
+directly instead of the bare package specifier.
+
+Meta-kernels (`KPL/MK`) work the same way: `load()`ing one fetches and
+expands it, resolving each `KERNELS_TO_LOAD` entry (after
+`PATH_SYMBOLS` substitution) as a URL *relative to the meta-kernel's
+own URL* -- the same relationship `furnsh()` already has to a meta-
+kernel's directory on disk.
+
+**A note on CORS**: `naif.jpl.nasa.gov` itself doesn't send
+`Access-Control-Allow-Origin`, so a browser page on another origin
+can't `fetch()` it directly -- no client-side trick fixes a missing
+CORS header on someone else's server. Either let users pick an
+already-downloaded kernel locally (the `File`/`Blob` path above, which
+has no CORS question at all), or re-host/proxy kernels somewhere that
+does send the header (a CORS-enabled bucket/CDN, or a small proxy --
+even a ~20-line edge function that fetches from NAIF server-side and
+adds the header). See `docs/browser-support.md` for the full
+investigation this is based on, including what was actually confirmed
+against real `naif.jpl.nasa.gov` responses.
+
+### Caching kernels locally
+
+`load()` takes an optional `cache`, consulted before fetching and
+populated after a miss, so a repeat `load()` of the same URL doesn't
+re-download it:
+
+```js
+import { load, createIndexedDbCache } from 'spicejs';
+
+const cache = createIndexedDbCache(); // persists across page loads
+await load('https://your-cors-enabled-host/de440s.bsp', undefined, { cache });
+```
+
+`createIndexedDbCache()` is browser-only (feature-detected -- it
+throws a clear error if `indexedDB` isn't available, e.g. called from
+plain Node); `createMemoryCache()` works everywhere, including Node,
+but only for the current process's lifetime. Both cache whole kernel
+files, keyed by URL -- there's no partial/range-based loading yet (see
+`docs/browser-support.md` §3.6 for that as a documented future
+direction, not something implemented here).
+
+### Overriding how `load()` resolves a reference
+
+Pass a `resolve` option to handle a reference type `load()`'s default
+resolver doesn't (a Node local path via `fs`, an authenticated fetch,
+an Electron IPC round trip to the main process, ...) -- it fully
+replaces the default resolver (URL/File/Blob/raw-bytes handling
+included), so provide whatever coverage you need:
+
+```js
+import fs from 'node:fs/promises';
+import { load } from 'spicejs'; // a Node context here, so this resolves to src/index.js -- load() is exported from both entry points
+
+await load('/local/path/to/kernel.bsp', undefined, {
+  resolve: (reference) => fs.readFile(reference),
+});
+```
 
 ## Development
 

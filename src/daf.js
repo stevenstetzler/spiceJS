@@ -39,21 +39,76 @@
  *   any "comment area" between it and FWARD are simply never visited.
  *   The paired "name records" (human-readable array names) are not
  *   read -- lookups here are by numeric ID, not by name.
+ *
+ * Every "buffer" parameter accepted here is any `Uint8Array` -- a
+ * Node `Buffer` (a `Uint8Array` subclass) or a plain `Uint8Array`
+ * (what a browser `fetch()` response's bytes normalize to -- see
+ * bytes.js's toUint8Array()) both work identically. Binary reads go
+ * through `DataView`, not Node's `Buffer`-only `readDoubleLE`/
+ * `toString('latin1', ...)` methods, specifically so this file has no
+ * Node dependency at all and can be bundled into a browser build
+ * unchanged -- see docs/browser-support.md §3.1 for why that port
+ * isn't quite the mechanical, zero-risk swap it looks like:
+ *
+ *   - `DataView` addresses every offset relative to *its own* start,
+ *     which can itself already be offset into a larger `ArrayBuffer`
+ *     (Node's small-`Buffer` pooling is the prime example). Every
+ *     `DataView` here is built via `toDataView()` below, which always
+ *     threads `byteOffset`/`byteLength` through explicitly -- get
+ *     that wrong and reads silently shift by a constant, no error.
+ *     The rest of this file (and callers in spk.js/pck.js) preserves
+ *     the invariant that every raw-byte read here uses an *absolute*
+ *     address into the one whole-file buffer, never a `.subarray()`
+ *     view of it -- don't introduce a sliced-buffer call site without
+ *     re-checking this comment.
+ *   - The ID word / format strings are decoded with a hand-rolled
+ *     byte-for-byte loop (`decodeLatin1`), not
+ *     `new TextDecoder('latin1').decode(...)`: the WHATWG `TextDecoder`
+ *     label `"latin1"` is actually a windows-1252 alias, which remaps
+ *     bytes 0x80-0x9F to different code points than a true ISO-8859-1
+ *     passthrough (Node `Buffer`'s `'latin1'`) would. Doesn't bite the
+ *     ASCII-only ID word/format fields, but the reserved/comment area
+ *     between LOCFMT and FWARD can contain arbitrary bytes.
  */
 
 const FILE_RECORD_BYTES = 1024;
 const WORD_BYTES = 8;
 
-function readAscii(buffer, start, end) {
-  return buffer.toString('latin1', start, end).replace(/\0/g, '').trim();
+/**
+ * Byte-for-byte ISO-8859-1 decode of `bytes[start, end)` -- every
+ * byte 0-255 maps straight to the same-valued code point, matching
+ * Node's `Buffer.toString('latin1', ...)` exactly (see this file's
+ * doc comment for why this isn't `TextDecoder('latin1')`). Exported
+ * for kernels.js/load.js's own magic-word sniffing, so there's one
+ * definition of "how to decode a DAF-style ASCII field" shared across
+ * every caller.
+ */
+export function decodeLatin1(bytes, start, end) {
+  let s = '';
+  for (let i = start; i < end; i++) s += String.fromCharCode(bytes[i]);
+  return s;
+}
+
+function readAscii(bytes, start, end) {
+  return decodeLatin1(bytes, start, end).replace(/\0/g, '').trim();
+}
+
+/**
+ * A `DataView` over exactly `bytes`' own span -- explicit about
+ * `byteOffset`/`byteLength` rather than assuming `bytes` is an
+ * unsliced view over its whole backing `ArrayBuffer` (see this file's
+ * doc comment).
+ */
+function toDataView(bytes) {
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
 /** Parse the file record (record 1) and validate it's a DAF this reader understands. */
-export function parseFileRecord(buffer) {
-  if (buffer.length < FILE_RECORD_BYTES) {
+export function parseFileRecord(bytes) {
+  if (bytes.byteLength < FILE_RECORD_BYTES) {
     throw new Error('daf: file is too small to contain a DAF file record');
   }
-  const idWord = readAscii(buffer, 0, 8);
+  const idWord = readAscii(bytes, 0, 8);
   // "NAIF/DAF" is a real, older, generic ID word -- several of NAIF's
   // own publicly distributed kernels (e.g. the DSN station-position
   // SPKs) use it instead of a type-specific word like "DAF/SPK". Real
@@ -64,7 +119,7 @@ export function parseFileRecord(buffer) {
     throw new Error(`daf: not a DAF file (expected an ID word starting with "DAF/", got "${idWord}")`);
   }
 
-  const format = readAscii(buffer, 88, 96);
+  const format = readAscii(bytes, 88, 96);
   let littleEndian;
   if (format === 'LTL-IEEE') {
     littleEndian = true;
@@ -77,7 +132,8 @@ export function parseFileRecord(buffer) {
     );
   }
 
-  const readInt32 = (offset) => (littleEndian ? buffer.readInt32LE(offset) : buffer.readInt32BE(offset));
+  const dv = toDataView(bytes);
+  const readInt32 = (offset) => dv.getInt32(offset, littleEndian);
 
   return {
     idWord,
@@ -91,17 +147,16 @@ export function parseFileRecord(buffer) {
 }
 
 /** Read the float64 words at 1-based DAF addresses [startAddr, endAddr] (inclusive). */
-export function readWords(buffer, littleEndian, startAddr, endAddr) {
+export function readWords(bytes, littleEndian, startAddr, endAddr) {
   const count = endAddr - startAddr + 1;
   if (count < 0) {
     throw new Error(`daf: invalid address range [${startAddr}, ${endAddr}]`);
   }
   const out = new Float64Array(count);
+  const dv = toDataView(bytes);
   const byteOffset = (startAddr - 1) * WORD_BYTES;
   for (let i = 0; i < count; i++) {
-    out[i] = littleEndian
-      ? buffer.readDoubleLE(byteOffset + i * WORD_BYTES)
-      : buffer.readDoubleBE(byteOffset + i * WORD_BYTES);
+    out[i] = dv.getFloat64(byteOffset + i * WORD_BYTES, littleEndian);
   }
   return out;
 }
@@ -112,11 +167,13 @@ export function readWords(buffer, littleEndian, startAddr, endAddr) {
  *
  * @returns {{ idWord, littleEndian, nd, ni, summaries: Array<{dc: number[], ic: number[]}> }}
  */
-export function parseDaf(buffer) {
-  const fileRecord = parseFileRecord(buffer);
+export function parseDaf(bytes) {
+  const fileRecord = parseFileRecord(bytes);
   const { littleEndian, nd, ni } = fileRecord;
   const summarySize = nd + Math.ceil(ni / 2); // words, including any unused trailing half-word
-  const readInt32 = (offset) => (littleEndian ? buffer.readInt32LE(offset) : buffer.readInt32BE(offset));
+  const dv = toDataView(bytes);
+  const readInt32 = (offset) => dv.getInt32(offset, littleEndian);
+  const readFloat64 = (offset) => dv.getFloat64(offset, littleEndian);
 
   const summaries = [];
   let recordNumber = fileRecord.fward;
@@ -128,15 +185,14 @@ export function parseDaf(buffer) {
     visited.add(recordNumber);
 
     const recordOffset = (recordNumber - 1) * FILE_RECORD_BYTES;
-    const next = littleEndian ? buffer.readDoubleLE(recordOffset) : buffer.readDoubleBE(recordOffset);
-    const nsum = littleEndian ? buffer.readDoubleLE(recordOffset + 16) : buffer.readDoubleBE(recordOffset + 16);
+    const next = readFloat64(recordOffset);
+    const nsum = readFloat64(recordOffset + 16);
 
     let wordOffset = recordOffset + 24; // past NEXT, PREV, NSUM
     for (let i = 0; i < Math.round(nsum); i++) {
       const dc = [];
       for (let j = 0; j < nd; j++) {
-        const off = wordOffset + j * WORD_BYTES;
-        dc.push(littleEndian ? buffer.readDoubleLE(off) : buffer.readDoubleBE(off));
+        dc.push(readFloat64(wordOffset + j * WORD_BYTES));
       }
       const icByteOffset = wordOffset + nd * WORD_BYTES;
       const ic = [];

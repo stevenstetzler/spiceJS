@@ -5,64 +5,21 @@
  * kernels (CK) and DAS-based kernels (DSK) are detected and rejected
  * with a clear "not supported yet" error rather than silently
  * misbehaving.
+ *
+ * This is the Node-specific half of kernel loading: `furnsh()` reads
+ * a local file synchronously via `fs.readFileSync` and resolves
+ * meta-kernel references via Node's `path`. The actual magic-word
+ * sniffing and pool merging is environment-agnostic (kernelBytes.js's
+ * `decodeKernel()`), shared with `load.js`'s `load()` -- the async
+ * sibling that accepts a URL/File/raw bytes instead of only a local
+ * path, for browser/network use. See docs/browser-support.md.
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { globalPool, KernelPool } from './pool.js';
-import { loadTextKernel } from './textKernel.js';
-import { loadSpk } from './spk.js';
-import { loadPck } from './pck.js';
-import { parseFileRecord } from './daf.js';
-
-// Per-pool record of what furnsh() loaded from each file, so unload()
-// can undo it. Keyed by pool identity so isolated pools (e.g. in
-// tests) don't share load history.
-const registries = new WeakMap();
-
-function registryFor(pool) {
-  let registry = registries.get(pool);
-  if (!registry) {
-    registry = new Map();
-    registries.set(pool, registry);
-  }
-  return registry;
-}
-
-function firstLineOf(text) {
-  const nl = text.indexOf('\n');
-  return (nl === -1 ? text : text.slice(0, nl)).trim();
-}
-
-function substitutePathSymbols(kernelPath, symbolMap) {
-  return kernelPath.replace(/\$([A-Za-z][A-Za-z0-9_]*)/g, (whole, symbol) =>
-    symbolMap.has(symbol) ? symbolMap.get(symbol) : whole
-  );
-}
-
-function loadMetaKernel(content, absPath, pool) {
-  // A meta-kernel's own PATH_SYMBOLS/PATH_VALUES/KERNELS_TO_LOAD
-  // variables are scratch data, not meant to land in the real kernel
-  // pool -- parse them into a throwaway pool instead.
-  const scratch = new KernelPool();
-  loadTextKernel(content, scratch);
-
-  const symbols = scratch.getValues('PATH_SYMBOLS') || [];
-  const values = scratch.getValues('PATH_VALUES') || [];
-  const symbolMap = new Map(symbols.map((s, i) => [s, values[i]]));
-  const kernelsToLoad = scratch.getValues('KERNELS_TO_LOAD') || [];
-
-  const baseDir = path.dirname(absPath);
-  for (const rawPath of kernelsToLoad) {
-    const substituted = substitutePathSymbols(String(rawPath), symbolMap);
-    const resolved = path.isAbsolute(substituted) ? substituted : path.resolve(baseDir, substituted);
-    furnsh(resolved, pool);
-  }
-  // Record the meta-kernel itself as loaded (with nothing of its own
-  // to undo) so a repeat/duplicate furnsh() and unload() of the .tm
-  // file behave sensibly. The kernels it expanded to were furnsh'd
-  // (and are unloaded) individually.
-  registryFor(pool).set(absPath, { type: 'meta' });
-}
+import { globalPool } from './pool.js';
+import { decodeKernel } from './kernelBytes.js';
+import { unloadKey, kclearPool } from './kernelRegistry.js';
+import { isUrlReference } from './kernelReference.js';
 
 /**
  * Load a kernel file, merging its contents into the kernel pool.
@@ -76,78 +33,16 @@ function loadMetaKernel(content, absPath, pool) {
  */
 export function furnsh(filePath, pool = globalPool) {
   const absPath = path.resolve(filePath);
-  const buffer = fs.readFileSync(absPath);
-  const magic = buffer.toString('latin1', 0, 8);
+  const bytes = fs.readFileSync(absPath);
+  const result = decodeKernel(bytes, absPath, pool);
 
-  if (magic.startsWith('KPL/')) {
-    const content = buffer.toString('utf8');
-    const header = firstLineOf(content).toUpperCase();
-    const subtype = header.slice(4).trim();
-    if (subtype === 'MK') {
-      loadMetaKernel(content, absPath, pool);
-      return;
+  if (result.isMeta) {
+    const baseDir = path.dirname(absPath);
+    for (const substituted of result.kernelsToLoad) {
+      const resolved = path.isAbsolute(substituted) ? substituted : path.resolve(baseDir, substituted);
+      furnsh(resolved, pool);
     }
-    const changes = loadTextKernel(content, pool);
-    registryFor(pool).set(absPath, { type: 'text', changes });
-    return;
   }
-
-  if (magic.startsWith('DAF/SPK')) {
-    const segments = loadSpk(buffer);
-    pool.addSpkSegments(segments);
-    registryFor(pool).set(absPath, { type: 'spk', segments });
-    return;
-  }
-
-  if (magic.startsWith('DAF/PCK')) {
-    const segments = loadPck(buffer);
-    pool.addPckSegments(segments);
-    registryFor(pool).set(absPath, { type: 'pck', segments });
-    return;
-  }
-
-  // Older/generic SPK and PCK files (including several of NAIF's own
-  // real, publicly distributed ones -- e.g. the DSN station-position
-  // kernels) use the generic "NAIF/DAF" ID word instead of "DAF/SPK"/
-  // "DAF/PCK". Real CSPICE still loads these as SPK/PCK data (confirmed
-  // empirically against spiceypy), so route by the parsed summary
-  // shape instead of the ID word text: SPK is ND=2,NI=6, PCK is
-  // ND=2,NI=5. (CK also happens to be ND=2,NI=6 -- shape alone can't
-  // tell it apart from SPK -- but CK isn't supported yet regardless,
-  // so a CK file under this generic word will just fail loudly inside
-  // loadSpk/evaluateSegment on an unrecognized segment type, not
-  // silently misbehave.)
-  if (magic.startsWith('NAIF/DAF')) {
-    const { nd, ni } = parseFileRecord(buffer);
-    if (nd === 2 && ni === 6) {
-      const segments = loadSpk(buffer);
-      pool.addSpkSegments(segments);
-      registryFor(pool).set(absPath, { type: 'spk', segments });
-      return;
-    }
-    if (nd === 2 && ni === 5) {
-      const segments = loadPck(buffer);
-      pool.addPckSegments(segments);
-      registryFor(pool).set(absPath, { type: 'pck', segments });
-      return;
-    }
-    throw new Error(
-      `furnsh: "${filePath}" is a generic binary DAF (ID word "${magic.trim()}") with summary shape ` +
-        `ND=${nd}, NI=${ni}, which doesn't match a supported SPK (ND=2, NI=6) or PCK (ND=2, NI=5) shape.`
-    );
-  }
-
-  if (magic.startsWith('DAF/')) {
-    throw new Error(
-      `furnsh: "${filePath}" is a binary SPICE kernel (${magic.trim()}). Only binary SPK and PCK kernels ` +
-        'are supported so far -- other binary kernels (CK, ...) are not.'
-    );
-  }
-
-  throw new Error(
-    `furnsh: "${filePath}" does not look like a recognized SPICE kernel (expected a text kernel ` +
-      'starting with "KPL/", or a binary SPK/PCK kernel starting with "DAF/SPK"/"DAF/PCK").'
-  );
 }
 
 /**
@@ -160,27 +55,15 @@ export function furnsh(filePath, pool = globalPool) {
  * @param {import('./pool.js').KernelPool} [pool]
  */
 export function unload(filePath, pool = globalPool) {
-  const absPath = path.resolve(filePath);
-  const registry = registryFor(pool);
-  const entry = registry.get(absPath);
-  if (!entry) return;
-
-  if (entry.type === 'text') {
-    for (const { name, hadPrevious, previousValue } of [...entry.changes].reverse()) {
-      if (hadPrevious) {
-        pool.putValues(name, previousValue, false);
-      } else {
-        pool.deleteVar(name);
-      }
-    }
-  } else if (entry.type === 'spk') {
-    pool.removeSpkSegments(entry.segments);
-  } else if (entry.type === 'pck') {
-    pool.removePckSegments(entry.segments);
-  }
-  // 'meta' entries have nothing of their own to undo.
-
-  registry.delete(absPath);
+  // A URL isn't a filesystem path -- path.resolve() would mangle it
+  // into something unrelated to the key load() registered it under
+  // (load() never runs a URL through path.resolve() -- see load.js).
+  // Everything else is assumed to be what furnsh() itself would have
+  // resolved it to. The actual undo logic (once the right key is
+  // known) is environment-agnostic -- see kernelRegistry.js's
+  // unloadKey(), shared with browser.js's own unload().
+  const absPath = isUrlReference(filePath) ? filePath : path.resolve(filePath);
+  unloadKey(absPath, pool);
 }
 
 /**
@@ -190,6 +73,5 @@ export function unload(filePath, pool = globalPool) {
  * @param {import('./pool.js').KernelPool} [pool]
  */
 export function kclear(pool = globalPool) {
-  pool.clear();
-  registryFor(pool).clear();
+  kclearPool(pool);
 }
