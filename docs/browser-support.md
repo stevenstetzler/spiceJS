@@ -308,6 +308,17 @@ without changing the interface.
 
 ### 3.6 Stretch goal: lazy/range-based loading, with a block-aligned cache
 
+**See `docs/lazy-loading.md` for the fully worked-out, real-numbers
+version of this** -- a concrete scoping pass (a `de440`/`de440s`
+Earth-over-a-year-window example, verified against the real NAIF file
+with actual `curl` range requests and cross-checked against real
+CSPICE via spiceypy) that came after this section was first written.
+The summary below is the original, more abstract sketch; the other
+document has the actual byte-range math, the architecture decision
+(reuse today's synchronous reader unchanged, layering a prefetch step
+above it, rather than making the whole reader async), and a phased
+implementation plan.
+
 Not needed for a first working version, but worth designing correctly
 up front since it changes the cache's shape from \S3.5. The naive
 version of this idea -- "cache arbitrary fetched byte ranges as
