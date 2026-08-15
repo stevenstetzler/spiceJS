@@ -69,9 +69,26 @@
  *     passthrough (Node `Buffer`'s `'latin1'`) would. Doesn't bite the
  *     ASCII-only ID word/format fields, but the reserved/comment area
  *     between LOCFMT and FWARD can contain arbitrary bytes.
+ *
+ * A "buffer" may optionally carry a `.checkRange(startByte,
+ * endByteExclusive)` method (see `lazy/remoteFile.js`), consulted
+ * before every read reaches the underlying `ArrayBuffer` -- this is
+ * how lazily-fetched files (`lazy/`) guarantee a read touching bytes
+ * that were never actually fetched throws a clear error instead of
+ * silently returning zeros. It's discovered as a property on the
+ * buffer itself, not threaded through every function's parameter list
+ * here, specifically so it protects *every* read that ever happens
+ * against such a buffer -- including ones made deep inside
+ * `chebyshevRecord.js`/`interpolatedRecord.js`/`spk.js`/`pck.js`
+ * during an ordinary, unmodified, synchronous `spkez()` call made
+ * after a `lazy/` prefetch step -- without any of those files needing
+ * to know this mechanism exists at all. A plain `Uint8Array`/`Buffer`
+ * (every existing caller, before this) simply doesn't have the
+ * property, so every existing read path is provably unaffected.
  */
 
-const FILE_RECORD_BYTES = 1024;
+/** Every DAF record (the file record, and each summary record) is this many bytes -- exported for lazy/prefetch.js. */
+export const FILE_RECORD_BYTES = 1024;
 const WORD_BYTES = 8;
 
 /**
@@ -84,6 +101,7 @@ const WORD_BYTES = 8;
  * every caller.
  */
 export function decodeLatin1(bytes, start, end) {
+  if (bytes.checkRange) bytes.checkRange(start, end);
   let s = '';
   for (let i = start; i < end; i++) s += String.fromCharCode(bytes[i]);
   return s;
@@ -97,10 +115,27 @@ function readAscii(bytes, start, end) {
  * A `DataView` over exactly `bytes`' own span -- explicit about
  * `byteOffset`/`byteLength` rather than assuming `bytes` is an
  * unsliced view over its whole backing `ArrayBuffer` (see this file's
- * doc comment).
+ * doc comment). If `bytes.checkRange` exists, every `getInt32`/
+ * `getFloat64` call is validated against it first -- `DataView` reads
+ * the underlying `ArrayBuffer` directly, bypassing `bytes`' own
+ * indexed accessors entirely, so this check has to happen at the
+ * `DataView`-call level, not by wrapping `bytes` itself (a `Proxy`
+ * around the `Uint8Array` would never see these calls at all).
  */
 function toDataView(bytes) {
-  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const checkRange = bytes.checkRange;
+  if (!checkRange) return dv;
+  return {
+    getInt32: (offset, littleEndian) => {
+      checkRange(offset, offset + 4);
+      return dv.getInt32(offset, littleEndian);
+    },
+    getFloat64: (offset, littleEndian) => {
+      checkRange(offset, offset + 8);
+      return dv.getFloat64(offset, littleEndian);
+    },
+  };
 }
 
 /** Parse the file record (record 1) and validate it's a DAF this reader understands. */

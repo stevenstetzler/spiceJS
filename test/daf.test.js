@@ -126,3 +126,56 @@ test('reading works correctly from a Uint8Array view with a nonzero byteOffset i
   const words = readWords(view, true, startAddr, endAddr);
   assert.deepEqual(Array.from(words), [50, 50, 1000, 10, 2000, 20, 3000, 30, 0, 100, 8, 1]);
 });
+
+// The checkRange hook lazy loading relies on (see this file's doc
+// comment and lazy/remoteFile.js): a buffer carrying a .checkRange
+// method has every DataView-backed read (parseFileRecord/parseDaf/
+// readWords) *and* every raw indexed read (decodeLatin1, used by
+// parseFileRecord's ID-word/format sniffing) validated against it
+// first, and a buffer without one (every plain Buffer/Uint8Array --
+// i.e. every existing caller) behaves exactly as before.
+test('a buffer with .checkRange has every read validated against it', () => {
+  const buf = writeSpk({ segments: [linearSegment()] });
+  const calls = [];
+  const checked = Object.assign(buf.subarray(), {
+    checkRange: (start, end) => calls.push([start, end]),
+  });
+
+  const fr = parseFileRecord(checked);
+  assert.equal(fr.idWord, 'DAF/SPK'); // still reads correctly -- checkRange only observes, doesn't block here
+  assert.ok(calls.length > 0, 'expected checkRange to be consulted for at least one read');
+
+  calls.length = 0;
+  const daf = parseDaf(checked);
+  assert.equal(daf.summaries.length, 1);
+  assert.ok(calls.length > 0);
+
+  calls.length = 0;
+  const { ic } = daf.summaries[0];
+  const [, , , , startAddr, endAddr] = ic;
+  const words = readWords(checked, true, startAddr, endAddr);
+  assert.deepEqual(Array.from(words), [50, 50, 1000, 10, 2000, 20, 3000, 30, 0, 100, 8, 1]);
+  assert.ok(calls.length > 0);
+});
+
+test('a .checkRange that throws stops the read from ever returning -- the "not prefetched" contract', () => {
+  const buf = writeSpk({ segments: [linearSegment()] });
+  const checked = Object.assign(buf.subarray(), {
+    checkRange: () => {
+      throw new Error('byte range was not prefetched');
+    },
+  });
+  assert.throws(() => parseFileRecord(checked), /byte range was not prefetched/);
+  assert.throws(() => parseDaf(checked), /byte range was not prefetched/);
+  assert.throws(() => readWords(checked, true, 1, 2), /byte range was not prefetched/);
+});
+
+test('a plain buffer with no .checkRange behaves exactly as before (existing callers are unaffected)', () => {
+  const buf = writeSpk({ segments: [linearSegment()] });
+  assert.equal(buf.checkRange, undefined);
+  // Already covered by every other test in this file -- this just
+  // states the invariant explicitly: no .checkRange property means
+  // no behavior change at all, the same code path as before this hook existed.
+  const fr = parseFileRecord(buf);
+  assert.equal(fr.idWord, 'DAF/SPK');
+});

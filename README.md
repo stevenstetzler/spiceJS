@@ -59,6 +59,12 @@ Supported today:
   targeting the browser resolves `import ... from 'spicejs'` to a
   dedicated Node-free entry point automatically (`package.json`'s
   `exports` "browser" condition) -- see "Running in a browser" below.
+- **Lazy-loading large kernels**: `openRemoteSpk()`/`openRemotePck()`
+  fetch only the bytes a specific `(target, observer, etStart, etEnd)`
+  query actually touches, via HTTP range requests -- a real 1-year
+  query against a 32.7 MB planetary ephemeris fetches under 1% of the
+  file. Covers SPK segment types 2/3/8/12/5/9/13 -- see "Lazy-loading
+  large kernels" below.
 
 Not yet supported (all fail with a clear error, not a silent wrong
 answer):
@@ -498,6 +504,76 @@ await load('/local/path/to/kernel.bsp', undefined, {
   resolve: (reference) => fs.readFile(reference),
 });
 ```
+
+## Lazy-loading large kernels
+
+`load()` downloads a whole kernel file. For something the size of a
+planetary ephemeris (`de440.bsp` is over 100 MB), that's often far
+more than a given query actually needs -- `openRemoteSpk()`/
+`openRemotePck()` fetch only the specific bytes a `(target, observer,
+etStart, etEnd)` (or, for PCK, `(frame, etStart, etEnd)`) query
+touches, via HTTP range requests:
+
+```js
+import { openRemoteSpk, spkez } from 'spicejs';
+
+const remote = await openRemoteSpk('https://your-cors-enabled-host/de440.bsp');
+await remote.prefetch({ target: 399, observer: 0, etStart: t1, etEnd: t2 });
+
+// Ordinary, synchronous, unmodified spkez() from here on.
+const { position, velocity } = spkez(399, 0, someEtBetweenT1AndT2, 'NONE', null, remote.pool);
+```
+
+For a real 1-year query against `de440s.bsp` (32.7 MB), this fetches
+**5 HTTP requests totaling ~280 KB -- under 1% of the file** --
+verified against the real, NAIF-distributed file, matching `spiceypy`
+to full double precision. See `docs/lazy-loading.md` for the full
+scoping (the byte-range math per segment type, the architecture
+decision, and real numbers this claim is based on) and its
+implementation status.
+
+`prefetch()` is incremental (already-fetched bytes are never
+re-fetched) and idempotent (already-registered segments are never
+re-added), so calling it again -- widening the time window, or for a
+different target/observer pair against the same file -- is cheap and
+safe. Querying an epoch outside what's been prefetched throws a clear,
+catchable error (not a wrong answer) -- catch it, call `prefetch()`
+again with a wider window, and retry:
+
+```js
+try {
+  spkez(399, 0, someOtherEt, 'NONE', null, remote.pool);
+} catch (err) {
+  await remote.prefetch({ target: 399, observer: 0, etStart: someOtherEt - margin, etEnd: someOtherEt + margin });
+  spkez(399, 0, someOtherEt, 'NONE', null, remote.pool); // now covered
+}
+```
+
+If you're using light-time correction (`abcorr` other than `'NONE'`),
+pass `lightTimeMargin` (seconds) to widen the prefetched window enough
+to cover `et ± lightTime` -- light times within the solar system range
+from ~8 minutes (Sun-Earth) to several *hours* for the outer planets
+(Neptune: ~4.2 light-hours; Pluto: up to ~6.5), so pick a margin
+appropriate to the bodies actually involved:
+
+```js
+await remote.prefetch({ target: 399, observer: 0, etStart: t1, etEnd: t2, lightTimeMargin: 5 * 3600 });
+spkez(399, 0, someEt, 'LT+S', null, remote.pool);
+```
+
+`openRemoteSpk()`/`openRemotePck()` take the same `cache`/
+`resolveRange`/`fileLength`/`blockBytes` options as `load()`'s
+caching support (see `createMemoryCache()`/`createIndexedDbCache()`
+above) -- fetches are cached in fixed-size, block-aligned chunks
+rather than whole files, so a second query against a previously-cached
+file benefits even when it touches a different part of the kernel.
+
+Segment types 2/3 (Chebyshev), 8/12 (Lagrange/Hermite, equal step),
+and 5/9/13 (Lagrange/Hermite/two-body, unequal step) are supported --
+covering `de440`/`de440s` and the large majority of real distributed
+kernels. Very-high-cadence unequal-step kernels (hundreds of thousands
+of epochs or more) aren't optimally supported yet -- see
+`docs/lazy-loading.md`'s Phase 4.
 
 ## Development
 

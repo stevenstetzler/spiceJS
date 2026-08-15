@@ -306,17 +306,23 @@ policy is defensible for the default; a stricter cache can layer
 `If-Modified-Since` revalidation (confirmed working in \S2) on top
 without changing the interface.
 
-### 3.6 Stretch goal: lazy/range-based loading, with a block-aligned cache
+### 3.6 Lazy/range-based loading, with a block-aligned cache -- implemented (Phases 1/2/3/5)
 
 **See `docs/lazy-loading.md` for the fully worked-out, real-numbers
-version of this** -- a concrete scoping pass (a `de440`/`de440s`
-Earth-over-a-year-window example, verified against the real NAIF file
-with actual `curl` range requests and cross-checked against real
-CSPICE via spiceypy) that came after this section was first written.
-The summary below is the original, more abstract sketch; the other
-document has the actual byte-range math, the architecture decision
-(reuse today's synchronous reader unchanged, layering a prefetch step
-above it, rather than making the whole reader async), and a phased
+version of this, and its current implementation status** -- a
+concrete scoping pass (a `de440`/`de440s` Earth-over-a-year-window
+example, verified against the real NAIF file with actual `curl` range
+requests and cross-checked against real CSPICE via spiceypy) that came
+after this section was first written, and whose Phases 1, 2, 3, and 5
+are now implemented (`src/lazy/`, exported as `openRemoteSpk`/
+`openRemotePck`/`openRemoteFile`). The summary below is the original,
+more abstract sketch that predates all of that; the other document has
+the actual byte-range math, the architecture decision (reuse today's
+synchronous reader unchanged, layering a prefetch step above it,
+rather than making the whole reader async), what was actually built
+(a few specifics -- notably the `checkRange` mechanism -- came out
+differently than first sketched, see that document's "What actually
+shipped"), and a phased
 implementation plan.
 
 Not needed for a first working version, but worth designing correctly

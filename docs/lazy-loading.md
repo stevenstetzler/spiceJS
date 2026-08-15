@@ -1,10 +1,24 @@
 # Scoping lazy/range-based kernel loading
 
-This is a scoping document for `docs/browser-support.md` §3.6 (block-
-aligned lazy/range loading) -- not implemented yet. It works through
-the concrete example the design was motivated by: lazily loading
-`de440.bsp` and calling `spkez` for Earth over a time range `[t1, t2]`,
-fetching only the bytes that query actually needs.
+**Status: Phases 1, 2, 3, and 5 are implemented** (`src/lazy/`:
+`remoteFile.js`, `byteRange.js`, `prefetch.js`, `openRemoteSpk.js`,
+`pckPrefetch.js`, `openRemotePck.js`, plus `daf.js`'s `checkRange`
+hook) -- exported as `openRemoteSpk`/`openRemotePck`/`openRemoteFile`
+from both `src/index.js` and `src/browser.js`. Phase 4 (types 5/9/13's
+large-`N`, on-disk-directory case) remains a scoped-but-unimplemented
+placeholder, as planned -- it needs its own source-verification pass
+first. Re-ran this document's `de440s.bsp` worked example through the
+*actual* implementation (not hand-rolled) after building it: **5 real
+HTTP requests, 285,696 bytes (0.87% of the 32,726,016-byte file)**,
+result matching `spiceypy` to full double precision. See "What actually
+shipped" below the phase-by-phase plan for the handful of things that
+came out slightly differently than originally sketched here, and why.
+
+This started as a scoping document for `docs/browser-support.md` §3.6
+(block-aligned lazy/range loading). It works through the concrete
+example the design was motivated by: lazily loading `de440.bsp` and
+calling `spkez` for Earth over a time range `[t1, t2]`, fetching only
+the bytes that query actually needs.
 
 ## The numbers, verified against the real file
 
@@ -111,11 +125,12 @@ underestimated.
 - It leaves `spk.js`/`pck.js`/`chebyshevRecord.js`/
   `interpolatedRecord.js` completely untouched, and needs only one
   small, purely additive, opt-in hook in `daf.js` (see Phase 1 below
-  for the precise shape -- an optional parameter that's a no-op unless
-  the new lazy-loading code explicitly passes it) -- no risk to the
-  180-plus tests and 619 crossval cases already validating that code,
-  and no need to re-earn that confidence for an async rewrite of the
-  same logic.
+  for the precise shape -- a buffer optionally carries a `.checkRange`
+  method, discovered and consulted only when present, so every
+  existing plain `Buffer`/`Uint8Array` caller is unaffected) -- no risk
+  to the 180-plus tests and 619 crossval cases already validating that
+  code, and no need to re-earn that confidence for an async rewrite of
+  the same logic.
 - `spkState`/`spkez`/`spkezr` stay synchronous, exactly as documented
   today -- no breaking change, no parallel async twins of the entire
   public query API (unlike `load()`, which really did need to be async
@@ -185,10 +200,19 @@ Each phase below is independently shippable and independently tested.
 Phase 1 builds essentially all of the shared machinery; phases 2-5
 mostly add one more case to a couple of dispatch functions.
 
-### Phase 1 -- types 2/3 (Chebyshev): the foundation
+### Phase 1 -- types 2/3 (Chebyshev): the foundation ✅ implemented
 
 This is the one that delivers the motivating `de440`/`de440s` scenario
 in full, and everything later reuses what gets built here.
+
+*(The pseudocode/design below is what was planned before writing any
+code, kept as-is for the reasoning. A few specifics changed once
+actually built and tested -- notably the `checkRange` mechanism, and
+`byteRangeForQuery()`'s own shape -- see "What actually shipped" at
+the end of this document for what's different in the real
+`src/lazy/*.js`/`src/daf.js` and why; the class is `RemoteFile`, not
+`RemoteSpkFile`, since it turned out to serve PCK too, once Phase 5
+existed.)*
 
 **New: `src/lazy/` (a new directory, alongside the existing `src/math/`
 and `src/data/` clusters of related-but-not-top-level-API files).**
@@ -379,7 +403,7 @@ larger than the `load()`/`cache.js` round (Phase 2-3 of
 infrastructure (`RemoteSpkFile`, the `checkRange` hook, the prefetch
 orchestration) rather than composing existing pieces.
 
-### Phase 2 -- types 8/12 (Lagrange/Hermite, equal step)
+### Phase 2 -- types 8/12 (Lagrange/Hermite, equal step) ✅ implemented
 
 **Modified: `src/lazy/byteRange.js`** -- add the `case 8: case 12:`
 branch to `byteRangeForQuery()`'s dispatch. Same complexity class as
@@ -416,7 +440,7 @@ already used for types 2/3.
 in `byteRange.js` plus the `interpolatedRecord.js` refactor to expose
 the shared windowing formula.
 
-### Phase 3 -- types 9/13/5 (unequal step), small-`N` case
+### Phase 3 -- types 9/13/5 (unequal step), small-`N` case ✅ implemented
 
 **Modified: `src/lazy/byteRange.js`** -- add the `case 5: case 9: case 13:`
 branch. Unlike 2/3/8/12, window/bracket selection here is
@@ -451,7 +475,7 @@ parts than 2/3/8/12's one-shot arithmetic, but reuses
 `interpolatedRecord.js`'s existing epoch-reading functions entirely
 unmodified.
 
-### Phase 4 -- types 9/13/5, large-`N` case (on-disk directory)
+### Phase 4 -- types 9/13/5, large-`N` case (on-disk directory) -- not implemented, as planned
 
 This is the one phase that needs new *format-decoding* work, not just
 new *lazy-loading* work, and needs its own source-verification pass
@@ -491,7 +515,7 @@ here as a placeholder for that verification, not a finished plan:
 likely comparable to Phase 1 given it's also genuinely new
 infrastructure, not composition of existing pieces.
 
-### Phase 5 -- PCK wiring
+### Phase 5 -- PCK wiring ✅ implemented
 
 **Modified: `src/lazy/prefetch.js`** -- generalize
 `prefetchSpkQuery()`'s segment-finding step (`findChainSegments`, built
@@ -520,3 +544,80 @@ Phase 1 alone is enough to cover the common case here too).
 
 **Rough size:** small -- mostly plumbing/generalization once Phase 1's
 machinery exists, no new format understanding needed.
+
+## What actually shipped (differences from the plan above, and why)
+
+The plan above was written before implementation; a few things came
+out differently once actually building and testing them. Recorded
+here rather than silently rewriting the plan, since the reasoning is
+worth keeping:
+
+- **The `checkRange` mechanism is discovered as a property on the
+  buffer object, not threaded as an explicit parameter.** The
+  original sketch (`readWords(bytes, ..., checkRange)`, with
+  `parseFileRecord`/`parseDaf` growing a matching parameter) would
+  only have protected `prefetch.js`'s *own* direct `daf.js` calls
+  (structural discovery, epilog reads) -- it would **not** have
+  protected a read made deep inside `chebyshevRecord.js`'s
+  `selectRecord()` or `interpolatedRecord.js`'s window/bracket readers
+  during an *ordinary, unmodified `spkez()` call after `prefetch()`
+  resolves* -- which is the case that actually matters, since none of
+  those existing call sites would ever pass the new parameter. Fixed
+  by having `daf.js`'s `toDataView()`/`decodeLatin1()` look for an
+  optional `bytes.checkRange` method instead: `RemoteFile`'s buffer
+  carries one (set up once, in `openRemoteFile()`/its constructor),
+  so *every* read against it is validated automatically, with zero
+  signature changes anywhere in `daf.js`, and zero behavior change for
+  every plain `Buffer`/`Uint8Array` (which simply doesn't have the
+  property) -- confirmed by the full existing suite + crossval passing
+  unchanged. See `src/daf.js`'s doc comment and `src/lazy/remoteFile.js`.
+- **`byteRangeForQuery()` fetches its own epilog/trailer internally**
+  (`async`, taking `remoteFile` directly), rather than `prefetch.js`
+  doing a generic "always the last 4 words" epilog fetch before calling
+  a synchronous `byteRangeForQuery(segment, epilog, ...)`. This has to
+  work this way once Phase 3 exists: types 5/9/13's trailer is only 2
+  words (not 4), and needs a *second*, data-dependent fetch (the epoch
+  array, whose address depends on `N`, which is only known after the
+  first fetch) before the touched state range is even computable --
+  a single generic "fetch 4 words, then compute" step in `prefetch.js`
+  couldn't express that. Each type's handler in `byteRange.js` now
+  owns its own fetch steps entirely; `prefetch.js` just calls
+  `byteRangeForQuery()` once and `ensureRange()`s whatever range comes
+  back.
+- **Block-alignment means "populated" is coarser than "exactly
+  requested."** `ensureRange()` rounds every request out to whole
+  blocks (per `docs/browser-support.md` §3.6's design), so a byte
+  adjacent to a legitimately-fetched one can end up populated too, as
+  a side effect -- the `checkRange` guarantee is "every byte any
+  `ensureRange()` call's *rounded* span covered is safe to read," not
+  "only the exact minimal bytes a query needed are readable." This
+  surfaced directly while writing Phase 3's tests: a `blockBytes: 128`
+  test on a tiny synthetic file coincidentally swept an *unprefetched*
+  bracket's bytes into the same populated blocks as the prefetched
+  one, so querying it didn't throw as the test first assumed --
+  correct behavior once understood (fewer HTTP requests is the whole
+  point of block alignment), just a sharper edge on the safety-net's
+  actual guarantee than the earlier "throws for anything not
+  requested" phrasing implied.
+- **`spkez(target, observer, ...)`'s target/observer chaining, not
+  "target down to a single center"**, was already corrected during
+  this document's own drafting (before code existed) after re-checking
+  against `spk.js`'s real `chainStateToSsb()` -- noted here only so the
+  "Two architectures" section's earlier, more mechanical framing isn't
+  read as the final word.
+- **Verification**: the `de440s.bsp` worked example at the top of this
+  document was re-run through the actual shipped code (`openRemoteSpk`
+  + `prefetchSpkQuery`, real `fetch()` against the live file, not a
+  hand-built sparse buffer) and matched `spiceypy` to full double
+  precision -- 5 HTTP requests, 285,696 bytes (0.87% of the file) for
+  the same 1-year Earth-vs-EMB-vs-SSB query. (One environment-specific
+  footnote, not a finding about the library itself: this sandbox's
+  outbound-network proxy required `NODE_USE_ENV_PROXY=1` for Node's
+  built-in `fetch()` to route through it at all -- unrelated to
+  `openRemoteSpk()`'s own `resolveRange`/`getFileLength` logic, which
+  just calls `fetch()` normally and works in a real browser or a
+  normally-configured Node environment without it.)
+
+Phase 4 was not attempted -- it remains exactly what the plan above
+says: needs its own source-verification pass against NAIF's
+`spkr09.c`/`spkr05.c` before it can be scoped, let alone built.

@@ -68,6 +68,26 @@ const MAX_CHAIN_HOPS = 20; // matches NAIF's own CHLEN (spkgeo.f)
 const SSB = 0;
 
 /**
+ * The pure `{dc, ic}` -> segment-descriptor field mapping SPK's
+ * ND=2,NI=6 summary shape uses -- exported so `lazy/prefetch.js` can
+ * interpret already-parsed summaries (from a lazily-fetched file's
+ * structural metadata) exactly the same way `loadSpk()` below does,
+ * without duplicating the field order.
+ */
+export function summaryToSpkSegment({ dc, ic }) {
+  return {
+    startEt: dc[0],
+    stopEt: dc[1],
+    target: ic[0],
+    center: ic[1],
+    frame: ic[2],
+    type: ic[3],
+    startAddr: ic[4],
+    endAddr: ic[5],
+  };
+}
+
+/**
  * Decode an SPK file's segments from its raw bytes. Each returned
  * segment carries its own `buffer`/`littleEndian` so it can be
  * evaluated independently of the file it came from.
@@ -85,15 +105,8 @@ export function loadSpk(buffer) {
     throw new Error(`spk: unexpected summary shape ND=${daf.nd} NI=${daf.ni} (SPK requires ND=2, NI=6)`);
   }
 
-  return daf.summaries.map(({ dc, ic }) => ({
-    startEt: dc[0],
-    stopEt: dc[1],
-    target: ic[0],
-    center: ic[1],
-    frame: ic[2],
-    type: ic[3],
-    startAddr: ic[4],
-    endAddr: ic[5],
+  return daf.summaries.map((summary) => ({
+    ...summaryToSpkSegment(summary),
     buffer,
     littleEndian: daf.littleEndian,
   }));

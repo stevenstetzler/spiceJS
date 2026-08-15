@@ -29,6 +29,26 @@ const PCK_NI = 5;
 const SUPPORTED_TYPES = new Set([2]);
 
 /**
+ * The pure `{dc, ic}` -> segment-descriptor field mapping PCK's
+ * ND=2,NI=5 summary shape uses -- exported so `lazy/pckPrefetch.js`
+ * can interpret already-parsed summaries (from a lazily-fetched
+ * file's structural metadata) exactly the same way `loadPck()` below
+ * does, without duplicating the field order (mirrors spk.js's own
+ * `summaryToSpkSegment()`).
+ */
+export function summaryToPckSegment({ dc, ic }) {
+  return {
+    startEt: dc[0],
+    stopEt: dc[1],
+    frame: ic[0],
+    refFrame: ic[1],
+    type: ic[2],
+    startAddr: ic[3],
+    endAddr: ic[4],
+  };
+}
+
+/**
  * Decode a binary PCK file's segments from its raw bytes. Each
  * returned segment carries its own `buffer`/`littleEndian` so it can
  * be evaluated independently of the file it came from.
@@ -45,14 +65,8 @@ export function loadPck(buffer) {
     throw new Error(`pck: unexpected summary shape ND=${daf.nd} NI=${daf.ni} (PCK requires ND=2, NI=5)`);
   }
 
-  return daf.summaries.map(({ dc, ic }) => ({
-    startEt: dc[0],
-    stopEt: dc[1],
-    frame: ic[0],
-    refFrame: ic[1],
-    type: ic[2],
-    startAddr: ic[3],
-    endAddr: ic[4],
+  return daf.summaries.map((summary) => ({
+    ...summaryToPckSegment(summary),
     buffer,
     littleEndian: daf.littleEndian,
   }));
