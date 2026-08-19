@@ -18,7 +18,7 @@ the live server), not transcribed from documentation.
 
 ## Why nothing binary is checked in
 
-The ten SPKs in the catalogue total **7.4 GB**:
+The ten SPKs in the catalogue total **8.0 GB**:
 
 | kernel | size | contents |
 | --- | --- | --- |
@@ -26,7 +26,7 @@ The ten SPKs in the catalogue total **7.4 GB**:
 | `de440` | 119.8 MB | Sun, planets, barycenters, ~1550-2650 |
 | `mar099` | 1.23 GB | Phobos, Deimos |
 | `jup365` | 1.14 GB | Io, Europa, Ganymede, Callisto + 4 inner moons |
-| `sat480` | 12.6 MB | Saturn itself + one small body (see caveat below) |
+| `sat441` | 661.6 MB | Mimas..Phoebe + Helene, Telesto, Calypso, Methone, Polydeuces |
 | `ura184-1` | 2.06 GB | Uranus inner small moons (Cordelia..Portia) |
 | `ura184-2` | 2.06 GB | Uranus: Rosalind, Belinda, Puck, Perdita, Mab, Cupid |
 | `ura184-3` | 386.9 MB | Uranus major moons (Ariel, Umbriel, Titania, Oberon, Miranda) |
@@ -78,10 +78,16 @@ real disk. Delete the directory any time; it all refetches on demand.
 
 ## Caveats found by reading the real files
 
-- **`sat480` has no classic Saturnian moons.** Despite the name it
-  carries only Saturn itself and one unnamed small body (65304), whose
-  only segment is **type 17**, which spiceJS does not evaluate yet. For
-  Titan/Enceladus/etc. you want a different `sat*.bsp`.
+- **Saturn's moons are split across two NAIF files, and only one is in
+  this catalogue.** `sat441.bsp` (here) has the nine classical named
+  moons plus five small inner/Lagrangian ones, all with real
+  `BODY<id>_RADII` data. `sat456.bsp` (not catalogued) has ~44
+  *irregular* outer moons instead -- recently given real names (2025),
+  replacing provisional `S/2004_S_xx` designations -- but none of them
+  have known real radii in `pck00011.tpc`, so they're not usable the
+  same way. An older `sat480.bsp` (superseded here, see git history)
+  had neither: just Saturn itself and one small body in an unsupported
+  type-17 segment.
 - **`nep105` has Nereid (802), not Triton (801).**
 - **Each satellite SPK is self-sufficient for chaining.** They all carry
   their own copies of the Sun, Earth, EMB and their planet's barycenter
