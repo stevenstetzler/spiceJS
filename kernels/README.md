@@ -1,12 +1,13 @@
 # Kernels
 
-Two text kernels are checked in here, because they're small and almost
-everything needs them:
+A handful of text kernels are checked in here, because they're small
+and almost everything needs them:
 
 | file | what it's for |
 | --- | --- |
 | `naif0012.tls` | Leapseconds (LSK) -- `str2et()`, `et2utc()` |
 | `pck00011.tpc` | Text PCK -- `BODY<id>_RADII`, `IAU_<BODY>` orientation constants |
+| `gm_de440.tpc` | `BODY<id>_GM` mass parameters (km^3/s^2) -- the browser demo's per-body orbital-period sizing (`estimateOrbitalPeriodSec()`, via the vis-viva equation) |
 | `basic.tm` | A tiny meta-kernel used by `examples/basic.mjs` |
 
 Everything else -- the binary SPK ephemerides -- is fetched from NAIF on
