@@ -19,7 +19,12 @@ range (~1100 years) against the real `de440.bsp`: 99.4-99.84% network
 reduction for narrow windows, 65-98% even for the full time range
 (only the 2-3 of the file's 14 segments relevant to a given body are
 ever touched), every sampled state within `1e-6`-`1e-7` km of real
-CSPICE (float64 noise, not a discrepancy).
+CSPICE (float64 noise, not a discrepancy). And it's been verified live
+in an actual browser, not just Node: `examples/browser-demo/` (a
+three.js visualization driven entirely by `openRemoteSpk()` +
+`File.slice()`) was run in real headless Chromium against the real
+`de440.bsp`, with zero console errors and all eleven plotted bodies at
+their correct positions (25 range reads, 1.64 MB touched out of 119.8 MB).
 
 This started as a scoping document for `docs/browser-support.md` §3.6
 (block-aligned lazy/range loading). It works through the concrete

@@ -578,6 +578,12 @@ kernels. Very-high-cadence unequal-step kernels (hundreds of thousands
 of epochs or more) aren't optimally supported yet -- see
 `docs/lazy-loading.md`'s Phase 4.
 
+See `examples/browser-demo/` for a live, in-browser demo: pick a real
+`.bsp` from disk and it plots eleven Solar System bodies over &plusmn;30
+days with three.js, using `openRemoteSpk()` + `File.slice()` to read
+only the bytes it needs -- verified in real headless Chromium against
+the real `de440.bsp` (25 range reads, 1.64 MB touched out of 119.8 MB).
+
 ## Development
 
 ```sh
