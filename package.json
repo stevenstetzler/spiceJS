@@ -18,7 +18,10 @@
   "scripts": {
     "test": "node --test test/*.test.js test/*/*.test.js",
     "crossval": "node crossval/gen-cases.mjs && node crossval/run-js.mjs && python3 crossval/run-py.py && node crossval/compare.mjs",
-    "perf": "node perf/benchmark.mjs && python3 perf/spiceypy-reference.py && node perf/report.mjs"
+    "perf": "node perf/benchmark.mjs && python3 perf/spiceypy-reference.py && node perf/report.mjs",
+    "download-spk": "node scripts/download-spk.mjs",
+    "serve-example": "node scripts/serve-example.mjs",
+    "inspect-spk": "node scripts/inspect-spk.mjs"
   },
   "files": [
     "src"

@@ -9,6 +9,7 @@ import { multiRecordLinearSegment } from './helpers/multiRecordSegment.js';
 import { equalStepLinearSegment } from './helpers/equalStepSegment.js';
 import { unequalStepLinearSegment } from './helpers/unequalStepSegment.js';
 import { circularOrbitSegment } from './helpers/type5Segment.js';
+import { scatterSummaryRecords } from './helpers/scatteredSummaryRecords.js';
 
 function closeTo(a, b, tol = 1e-9) {
   assert.ok(Math.abs(a - b) < tol, `expected ${a} to be close to ${b}`);
@@ -330,4 +331,45 @@ test('prefetchSpkQuery + ordinary spkez() for a type 5 (two-body propagation) se
   // bracket (epochs[2]=300, epochs[3]=900) is nowhere near the one
   // prefetched for [-50, 50] (epochs[1]=-100, epochs[2]=300).
   assert.throws(() => spkez(499, 0, 700, 'NONE', null, pool), /was not prefetched/);
+});
+
+test('a scattered summary-record chain fetches the records, not the whole span between them', async () => {
+  // Regression test for prefetchQuery() bulk-fetching FWARD..BWARD as
+  // one contiguous range. That's indistinguishable from walking the
+  // chain for the common layout (summary records clustered at the
+  // front) -- and catastrophic when they're scattered: measured
+  // against the real, live ura184_part-3.bsp (386.9 MB), the bulk
+  // range pulled 334 MB (86% of the file) where walking the chain
+  // pulls ~0.5 MiB. See ensureSummaryRecords() in prefetch.js.
+  const { buf: compactBuf, embRelSsb } = earthEmbSsbFixture();
+  const { buf, spanBytes } = scatterSummaryRecords(compactBuf, 400);
+
+  const blockBytes = 1024;
+  const { remoteFile, requests } = fakeRemoteFile(buf, { blockBytes });
+  const pool = new KernelPool();
+
+  await prefetchSpkQuery(remoteFile, pool, { target: 3, observer: 0, etStart: -50, etEnd: 50 });
+
+  // Correctness first: the scattered chain must parse to the same
+  // segments and give the same answer as the compact file would.
+  const et = 20;
+  const { position, velocity } = spkez(3, 0, et, 'NONE', null, pool);
+  const expected = embRelSsb.expectedStateAt(et);
+  [...position, ...velocity].forEach((v, i) => closeTo(v, [...expected.position, ...expected.velocity][i], 1e-6));
+
+  // Then the point of the test: the gap between the two summary
+  // records was never fetched. The old bulk range would have pulled
+  // the entire ~400-record span in one go.
+  const fetched = requests.reduce((sum, [start, end]) => sum + (end - start), 0);
+  assert.ok(
+    fetched < spanBytes / 4,
+    `expected structural discovery to skip the inter-record gap, but fetched ${fetched} bytes of a ${spanBytes}-byte span`
+  );
+
+  // And nothing in the middle of the gap was touched at all.
+  const gapProbe = Math.floor(compactBuf.byteLength + 200 * 1024);
+  assert.ok(
+    !requests.some(([start, end]) => gapProbe >= start && gapProbe < end),
+    'no request should cover the middle of the inter-summary-record gap'
+  );
 });

@@ -557,6 +557,100 @@ Phase 1 alone is enough to cover the common case here too).
 **Rough size:** small -- mostly plumbing/generalization once Phase 1's
 machinery exists, no new format understanding needed.
 
+## Fix: structural discovery walked the summary-record chain the wrong way
+
+Adding the satellite kernels (see `kernels/sources.mjs`) surfaced a bug
+that had been invisible for every file tested until then.
+
+`prefetchQuery()` used to fetch the DAF summary records with a single
+bulk `ensureRange(FWARD, BWARD)` -- the first and last summary record
+numbers, both named right in the file record. That fetches the whole
+*span* between them, not the records themselves. For the usual layout,
+where summary records cluster at the front of the file, the span is a
+couple of KB and the two are indistinguishable. For a file whose
+summary records are scattered through it -- which happens naturally
+when a DAF grows by appending -- the span is most of the file.
+
+Measured on the real `ura184_part-3.bsp` (386.9 MB): the bulk range
+pulled **334 MB, 86% of the entire file**, to answer one query. Lazy
+loading had effectively stopped working on exactly the kind of file it
+exists for.
+
+The fix walks the chain the way `parseDaf()` already does: fetch record
+FWARD, read its NEXT pointer (the record's first word), fetch that one,
+repeat. Each is 1024 bytes, so each costs one block. Same file, after:
+**0.50 MiB, 0.136%** -- and the answer (Ariel relative to the SSB) is
+unchanged. Every other kernel tested was unaffected either way.
+
+`test/lazy/prefetch.test.js` has a regression test that builds a
+deliberately scattered chain and asserts the gap between records is
+never fetched; it fails loudly against the old bulk-range code.
+
+## Serving kernels through a range-caching proxy
+
+`openRemoteSpk()` needs a URL that (a) honours HTTP Range requests and
+(b) is readable by the page. NAIF satisfies the first and, for a
+browser, fails the second: no `Access-Control-Allow-Origin` on any
+response, so a cross-origin `fetch()` can never read the bytes --
+caching doesn't help, because caching an unreadable response leaves it
+unreadable.
+
+`scripts/serve-example.mjs` (`npm run serve-example`) closes that gap
+with a proxy that is, deliberately, the same design as
+`src/lazy/remoteFile.js` -- just on disk instead of in memory:
+
+```
+browser                    proxy (same origin)              NAIF
+  |  GET /kernels/remote/de440.bsp        |                   |
+  |  Range: bytes=1048576-1114111         |                   |
+  |-------------------------------------->|                   |
+  |                    block present?  ---+                   |
+  |                       no -> Range GET |------------------>|
+  |                          write into sparse file, set bit  |
+  |  206 Partial Content <----------------|                   |
+```
+
+Per kernel it keeps two files under `kernels/cache/`:
+
+- `de440.bsp` -- a **sparse** file the full length of the remote one.
+  Unwritten regions are holes: they read as zeros and cost no disk.
+- `de440.bsp.blocks` -- a bitmap, one bit per block, recording which
+  blocks hold real bytes. The bitmap, never the file length, is the
+  source of truth; a filesystem without sparse support just stores the
+  zeros, and correctness is unaffected.
+
+A read rounds out to block boundaries, fetches only blocks whose bits
+are clear (coalescing adjacent misses into one upstream request,
+sharing in-flight promises so concurrent requests never double-fetch),
+commits them, then answers from local disk. Restarting the server keeps
+everything, because both pieces are just files.
+
+**Block size is the one real tuning knob**, and measurement overturned
+the initial guess. The first cut used 1 MiB blocks, reasoning that
+fewer round trips to a slow server would win. Measured against the real
+`de440s.bsp`, for exactly the query the demo makes on load (23 browser
+reads, 1.47 MB):
+
+| block size | upstream requests | upstream bytes | amplification |
+| --- | --- | --- | --- |
+| 64 KiB | 23 | 1.47 MB | 1.0x |
+| 128 KiB | 23 | 2.97 MB | 2.0x |
+| 256 KiB | 21 | 5.46 MB | 3.7x |
+| 512 KiB | 18 | 9.13 MB | 6.2x |
+| 1 MiB | 15 | 14.90 MB | 10.2x |
+
+1 MiB cost 10x the bytes to save 8 of 23 requests -- these reads are
+scattered (one per segment epilog/record range, not a sequential scan),
+so larger blocks mostly pull neighbours nothing asked for. The default
+is now 64 KiB, matching `remoteFile.js`'s own block size exactly, which
+makes the proxy fetch precisely what the page asked for and nothing
+else.
+
+Real numbers from a verified session: five kernels totalling 4.95 GB
+apparent, **22 MB actually on disk**; a cold demo load of `de440s`
+took 5.6 s and a warm one 1.8 s with zero upstream fetches. And
+`ura184_part-1.bsp` -- 2.06 GB -- costs 1.0 MB of disk to open.
+
 ## What actually shipped (differences from the plan above, and why)
 
 The plan above was written before implementation; a few things came

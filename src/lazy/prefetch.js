@@ -18,12 +18,58 @@
  * `spkez()`/`spkState()`/`rotateState()` calls against it work
  * unmodified.
  */
-import { parseFileRecord, parseDaf, FILE_RECORD_BYTES } from '../daf.js';
+import { parseFileRecord, parseDaf, readWords, FILE_RECORD_BYTES } from '../daf.js';
 import { summaryToSpkSegment } from '../spk.js';
 import { byteRangeForQuery } from './byteRange.js';
 
 const SSB = 0; // mirrors spk.js's own SSB constant
 const MAX_CHAIN_HOPS = 20; // mirrors spk.js's own MAX_CHAIN_HOPS (matches NAIF's CHLEN, spkgeo.f)
+const WORDS_PER_RECORD = FILE_RECORD_BYTES / 8; // 128 -- DAF records are 1024 bytes = 128 double-precision words
+
+/**
+ * Fetch exactly the summary records `parseDaf()` will walk, by walking
+ * that same chain here one 1024-byte record at a time -- each record's
+ * first word is the record number of the next one (0 = end), so the
+ * chain can only be discovered incrementally, never predicted.
+ *
+ * The obvious-looking alternative -- one bulk `ensureRange()` from
+ * FWARD to BWARD (the first and last summary records, both named right
+ * in the file record) -- is what this used to do, and it's a trap: it
+ * fetches the whole *span* between them, not just the records
+ * themselves. That's harmless for the common layout where summary
+ * records cluster at the front of the file, but catastrophic when
+ * they're scattered through it. Measured against the real, live
+ * `ura184_part-3.bsp` (386.9 MB): the bulk range pulled **334 MB**
+ * (86% of the entire file) where walking the chain pulls ~4 blocks --
+ * i.e. the bulk version silently defeated the whole point of lazy
+ * loading on exactly the kind of big file it exists to serve. Every
+ * other kernel tested (de440, de440s, mar099, jup365, nep105, plu060,
+ * sat480, ura184 parts 1-2) was unaffected either way, which is
+ * precisely why this went unnoticed until a file with a scattered
+ * layout showed up.
+ *
+ * @param {import('./remoteFile.js').RemoteFile} remoteFile
+ * @param {{ fward: number, littleEndian: boolean }} fileRecord
+ */
+async function ensureSummaryRecords(remoteFile, fileRecord) {
+  let recordNumber = fileRecord.fward;
+  const visited = new Set();
+  while (recordNumber !== 0) {
+    if (visited.has(recordNumber)) {
+      throw new Error(`prefetchQuery: summary record chain loops back to record ${recordNumber}`);
+    }
+    visited.add(recordNumber);
+
+    const startByte = (recordNumber - 1) * FILE_RECORD_BYTES;
+    await remoteFile.ensureRange(startByte, startByte + FILE_RECORD_BYTES);
+
+    // The record's first word is NEXT: the next summary record's
+    // number, or 0 at the end of the chain.
+    const firstWordAddr = (recordNumber - 1) * WORDS_PER_RECORD + 1; // readWords() addresses are 1-based
+    const [next] = readWords(remoteFile.buffer, fileRecord.littleEndian, firstWordAddr, firstWordAddr);
+    recordNumber = Math.round(next);
+  }
+}
 
 function dedupeByStartAddr(segments) {
   const seen = new Set();
@@ -54,7 +100,7 @@ export async function prefetchQuery(remoteFile, { findSegments, addSegments, etS
 
   await remoteFile.ensureRange(0, FILE_RECORD_BYTES);
   const fileRecord = parseFileRecord(remoteFile.buffer);
-  await remoteFile.ensureRange((fileRecord.fward - 1) * FILE_RECORD_BYTES, fileRecord.bward * FILE_RECORD_BYTES);
+  await ensureSummaryRecords(remoteFile, fileRecord);
   const daf = parseDaf(remoteFile.buffer);
 
   const marginedStart = etStart - lightTimeMargin;

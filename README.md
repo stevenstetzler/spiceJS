@@ -578,11 +578,37 @@ kernels. Very-high-cadence unequal-step kernels (hundreds of thousands
 of epochs or more) aren't optimally supported yet -- see
 `docs/lazy-loading.md`'s Phase 4.
 
-See `examples/browser-demo/` for a live, in-browser demo: pick a real
-`.bsp` from disk and it plots eleven Solar System bodies over &plusmn;30
-days with three.js, using `openRemoteSpk()` + `File.slice()` to read
-only the bytes it needs -- verified in real headless Chromium against
-the real `de440.bsp` (25 range reads, 1.64 MB touched out of 119.8 MB).
+See `examples/browser-demo/` for a live, in-browser demo: it plots ten
+Solar System bodies with three.js, using `openRemoteSpk()` to read only
+the bytes it needs -- verified in real headless Chromium against the
+real `de440.bsp` (25 range reads, 1.64 MB touched out of 119.8 MB).
+
+### Getting kernels without downloading them
+
+`kernels/sources.mjs` catalogues the NAIF kernels this repo knows how to
+fetch -- DE440/DE440s plus the Mars, Jupiter, Saturn, Uranus, Neptune
+and Pluto satellite ephemerides. They total **7.4 GB**, so nothing is
+checked in and nothing needs downloading up front:
+
+```sh
+npm run serve-example   # http://localhost:8080/examples/browser-demo/
+```
+
+That serves the repo *and* a range-caching proxy at
+`/kernels/remote/<file>.bsp` which forwards HTTP Range requests to NAIF
+and stores what comes back in a sparse local file, so a kernel is only
+ever fetched in the ~64 KiB blocks a query actually touches. The demo
+detects it and offers one-click loading -- no file picker, and no CORS
+problem, since the kernel is now same-origin (`naif.jpl.nasa.gov` sends
+no `Access-Control-Allow-Origin`, so a browser can never read it
+cross-origin directly).
+
+Measured on the real `de440s.bsp`, for the demo's own startup query:
+**23 ranged reads, 1.47 MB fetched of 32.7 MB**, and reloading fetches
+nothing. Across a session touching five kernels totalling 4.95 GB, real
+disk use was **22 MB**. Use `npm run download-spk` when you want a whole
+file offline, or for a tool that can't do ranged reads. See
+`kernels/README.md`.
 
 ## Development
 
@@ -593,6 +619,10 @@ node examples/spk.mjs
 node examples/pck.mjs
 npm run crossval  # cross-validates str2et/spkez/spkezr against spiceypy (needs `pip install spiceypy`) -- see crossval/README.md
 npm run perf      # benchmarks openRemoteSpk()'s network savings + accuracy against the real de440.bsp -- see perf/README.md
+
+npm run serve-example          # serve the browser demo + a range-caching kernel proxy (see below)
+npm run download-spk -- --list # what NAIF kernels this repo knows about; add ids to download them
+npm run inspect-spk -- --check # re-verify kernels/sources.mjs against the live files
 ```
 
 `src/data/bodyIds.js`, `src/data/inertialFrames.js`, and
