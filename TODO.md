@@ -1,0 +1,64 @@
+# TODO
+
+Things discussed or scoped but not implemented yet. Everything here
+fails today with a clear, catchable error — never a silently wrong
+answer — unless noted otherwise.
+
+## Core library
+
+- **CK (spacecraft/instrument orientation) kernels.** Shares SPK/PCK's
+  DAF container (`src/daf.js`), so it's the most natural next binary
+  kernel type to add — no new container-format work needed, just a
+  new segment reader.
+- **DSK (digital shape) kernels.** A different container format
+  entirely (DAS, not DAF) — real new groundwork, not an extension of
+  the existing DAF reader.
+- **Dynamic and switch reference frames**, and the one built-in class
+  4 frame in NAIF's table (`EARTH_FIXED`, a hardcoded ITRF93-relative
+  frame, not PCK-driven). Only the fixed-matrix inertial frames,
+  PCK-driven body-fixed frames, and FK-defined (TK/PCK-backed) frames
+  are supported today.
+- **Orientation constants defined relative to a non-J2000 epoch or
+  frame** (`BODY#_CONSTANTS_JED_EPOCH`/`BODY#_CONSTANTS_REF_FRAME`).
+  Rare in practice; a loaded kernel that sets either is a clear error
+  rather than being silently ignored.
+- **Spacecraft clock (SCLK) time strings**, and general time zones
+  beyond the handful `str2et_c` itself documents (the U.S. zones, and
+  `UTC±H:MM`).
+- **Lazy-loading Phase 4**: SPK/PCK segment types 5/9/13 with a large
+  epoch count (`N`) use an on-disk directory (one entry per 100
+  epochs) in the real format specifically so a reader can binary-search
+  it instead of reading the whole epoch array. `readUnequalStepEpochs()`
+  currently always reads the full array and explicitly skips the
+  directory — fine for the small/medium-`N` kernels tested so far, but
+  not optimal for a very-high-cadence kernel (hundreds of thousands of
+  epochs or more). Needs a source-verification pass against
+  `spkr09.c`/`spkr05.c` in the OpenSpace/Spice mirror before it can be
+  scoped precisely — see `docs/lazy-loading.md`'s "Phase 4" section.
+- **Partial/range-based caching for `load()`'s own cache layer.**
+  `createMemoryCache()`/`createIndexedDbCache()` (`src/cache.js`) are a
+  plain key(URL)/whole-value store — a cache miss re-downloads the
+  entire file, even if `openRemoteSpk()`/`openRemotePck()`'s own
+  separate block-aligned range cache (`docs/browser-support.md` §3.6,
+  now implemented) already has some of those same bytes. Unifying the
+  two into one range-aware cache is a documented future direction, not
+  attempted.
+
+## Browser demo (`examples/browser-demo/`)
+
+- **Trajectory-mode resolution for very-high-loop-count bodies.**
+  Each body's arc now gets a sample budget scaled to how many loops
+  its window implies (`arcSampleBudget()`, ~24 points/loop target),
+  but it's still clamped to a 2000-sample ceiling for cost reasons —
+  Neptune viewed from Earth in Sidereal mode (~164 implied loops)
+  still lands around ~12 points/loop, short of the target density. A
+  higher ceiling, or a genuinely adaptive/simplification-based scheme
+  (sample densely then simplify, rather than a fixed per-body point
+  budget) would improve this further, at real added render/compute
+  cost — see the "Trajectory" section of `examples/browser-demo/README.md`
+  for the measured numbers this trade-off is based on.
+- **Saturn's irregular moons** (`sat456.bsp`, ~44 bodies, recently
+  given real names) aren't usable in precise mode: none have known
+  real radii in `pck00011.tpc`, so they can't be rendered to scale the
+  way the catalogued `sat441.bsp` moons are. Revisit if a future PCK
+  release adds radii for them.
