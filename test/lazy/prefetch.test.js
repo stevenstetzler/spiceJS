@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { writeSpk } from '../helpers/writeSpk.js';
-import { loadSpk, spkez, spkSegments } from '../../src/spk.js';
+import { loadSpk, spkez, spkState, spkSegments } from '../../src/spk.js';
 import { KernelPool } from '../../src/pool.js';
-import { prefetchSpkQuery } from '../../src/lazy/prefetch.js';
+import { prefetchSpkQuery, prefetchSpkBodySegment } from '../../src/lazy/prefetch.js';
 import { fakeRemoteFile } from './helpers/fakeRemote.js';
 import { multiRecordLinearSegment } from './helpers/multiRecordSegment.js';
 import { equalStepLinearSegment } from './helpers/equalStepSegment.js';
@@ -331,6 +331,70 @@ test('prefetchSpkQuery + ordinary spkez() for a type 5 (two-body propagation) se
   // bracket (epochs[2]=300, epochs[3]=900) is nowhere near the one
   // prefetched for [-50, 50] (epochs[1]=-100, epochs[2]=300).
   assert.throws(() => spkez(499, 0, 700, 'NONE', null, pool), /was not prefetched/);
+});
+
+test('prefetchSpkBodySegment: fetches only the local hop, no chain-to-SSB requirement', async () => {
+  // A "heliocentric" fixture: the target's own segment is relative to
+  // a center (10, standing in for the Sun) that this file itself has
+  // no chain for at all -- prefetchSpkQuery() would fail outright.
+  const bodyRelSun = multiRecordLinearSegment({
+    target: 10231104, center: 10,
+    p0: [3e8, 4e7, 5e6], v0: [0.1, -0.2, 0.01],
+    n: 10, intlen: 100, init: -500,
+  });
+  const buf = writeSpk({ segments: [bodyRelSun] });
+  const { remoteFile } = fakeRemoteFile(buf, { blockBytes: 128 });
+  const pool = new KernelPool();
+
+  await prefetchSpkBodySegment(remoteFile, pool, { bodyId: 10231104, etStart: -50, etEnd: 50 });
+  assert.equal(spkSegments(pool).length, 1);
+
+  // The chain to the SSB doesn't resolve -- the Sun's own (10 -> 0)
+  // segment was never provided, by design (this is the "leave
+  // completing the chain to whatever else populated pool" half).
+  assert.throws(() => spkez(10231104, 0, 10, 'NONE', null, pool), /stuck at body 10/);
+
+  // But a direct spkState() lookup against its own declared center
+  // (10) -- no SSB chaining involved -- works exactly like any
+  // ordinary prefetched segment. (spkez() always resolves *both*
+  // sides via the SSB, even when observer already equals target's own
+  // center, so it's not the right check here -- see the next test for
+  // the full spkez()-through-SSB case.)
+  const et = 10;
+  const { position } = spkState(10231104, 10, et, pool);
+  const expected = bodyRelSun.expectedStateAt(et).position;
+  position.forEach((p, i) => closeTo(p, expected[i], 1e-6));
+});
+
+test('prefetchSpkBodySegment + a separately-prefetched pool: the chain resolves once both halves are present', async () => {
+  // Two different "files" -- one carrying (10231104 -> 10), the other
+  // (10 -> 0) -- registered into the *same* pool via two independent
+  // prefetch calls, mirroring examples/browser-demo/index.html's
+  // custom-kernel fallback (a custom file's own segment merged with
+  // the primary kernel's already-loaded Sun-to-SSB chain).
+  const bodyRelSun = multiRecordLinearSegment({
+    target: 10231104, center: 10,
+    p0: [3e8, 4e7, 5e6], v0: [0.1, -0.2, 0.01],
+    n: 10, intlen: 100, init: -500,
+  });
+  const sunRelSsb = multiRecordLinearSegment({
+    target: 10, center: 0,
+    p0: [-5e5, 2e5, 0], v0: [0.01, -0.02, 0],
+    n: 10, intlen: 100, init: -500,
+  });
+  const customBuf = writeSpk({ segments: [bodyRelSun] });
+  const primaryBuf = writeSpk({ segments: [sunRelSsb] });
+  const { remoteFile: customFile } = fakeRemoteFile(customBuf, { blockBytes: 128 });
+  const { remoteFile: primaryFile } = fakeRemoteFile(primaryBuf, { blockBytes: 128 });
+  const pool = new KernelPool();
+
+  await prefetchSpkQuery(primaryFile, pool, { target: 10, observer: 0, etStart: -50, etEnd: 50 });
+  await prefetchSpkBodySegment(customFile, pool, { bodyId: 10231104, etStart: -50, etEnd: 50 });
+
+  const et = 10;
+  const { position } = spkez(10231104, 0, et, 'NONE', null, pool);
+  const expected = addState(bodyRelSun.expectedStateAt(et).position, sunRelSsb.expectedStateAt(et).position);
+  position.forEach((p, i) => closeTo(p, expected[i], 1e-6));
 });
 
 test('a scattered summary-record chain fetches the records, not the whole span between them', async () => {

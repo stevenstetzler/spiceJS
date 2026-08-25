@@ -230,3 +230,51 @@ export async function prefetchSpkQuery(remoteFile, pool, { target, observer, etS
     addSegments: (segments) => addSpkSegmentsIfMissing(pool, segments),
   });
 }
+
+/**
+ * Fetch (into `remoteFile`, and register into `pool`) just `bodyId`'s
+ * own segment(s) covering `[etStart, etEnd]` -- one hop, no
+ * chain-to-SSB requirement, unlike `prefetchSpkQuery()` above.
+ *
+ * The motivating case: a kernel whose only segment for a body is
+ * relative to some *external* center (the Sun, say, or Earth) rather
+ * than the Solar System Barycenter directly -- common for real
+ * small-body/spacecraft SPK products (heliocentric states), and the
+ * norm rather than the exception. `prefetchSpkQuery()` requires the
+ * *whole* chain to the SSB to exist within one file (`findChainToSsb()`
+ * only ever walks `remoteFile`'s own summaries), so it fails outright
+ * on a kernel like that even when the missing link (the center's own
+ * chain to the SSB) is already sitting in `pool` from a different,
+ * already-loaded file -- `KernelPool` segments are file-agnostic, so
+ * `spkez()`/`spkState()` would happily complete the chain across both
+ * files once both halves are registered. This is the other half: fetch
+ * just the local hop, and leave completing the chain to whatever else
+ * has (or hasn't) already populated `pool` -- callers that need to
+ * know whether the full chain now resolves should follow up with an
+ * ordinary `spkState()`/`spkez()` call and let it fail clearly if not
+ * (see `examples/browser-demo/index.html`'s "Add a custom kernel" for
+ * exactly this pattern).
+ *
+ * @param {import('./remoteFile.js').RemoteFile} remoteFile
+ * @param {import('../pool.js').KernelPool} pool
+ * @param {object} query
+ * @param {number} query.bodyId
+ * @param {number} query.etStart
+ * @param {number} query.etEnd
+ * @param {number} [query.lightTimeMargin]
+ */
+export async function prefetchSpkBodySegment(remoteFile, pool, { bodyId, etStart, etEnd, lightTimeMargin = 0 }) {
+  await prefetchQuery(remoteFile, {
+    etStart,
+    etEnd,
+    lightTimeMargin,
+    findSegments: (summaries, marginedStart, marginedEnd) => {
+      const segments = segmentsForBody(summaries, bodyId, marginedStart, marginedEnd);
+      if (segments.length === 0) {
+        throw new Error(`prefetchSpkBodySegment: no segment found for body ${bodyId} covering [${etStart}, ${etEnd}]`);
+      }
+      return segments;
+    },
+    addSegments: (segments) => addSpkSegmentsIfMissing(pool, segments),
+  });
+}
