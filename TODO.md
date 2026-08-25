@@ -62,19 +62,22 @@ answer — unless noted otherwise.
   real radii in `pck00011.tpc`, so they can't be rendered to scale the
   way the catalogued `sat441.bsp` moons are. Revisit if a future PCK
   release adds radii for them.
-- **Custom kernel loading doesn't chain across two *custom* files.**
-  "Add a custom kernel" (see `examples/browser-demo/README.md`)
-  registers a custom kernel's segments into the same pool the primary
-  kernel uses, so a custom body can be positioned relative to (or used
-  as Center for) any of the ten built-in bodies -- including the
-  common case of a heliocentric (Sun-relative) or other
-  externally-anchored small-body/spacecraft kernel, via
-  `prefetchSpkBodySegment()`'s single-hop fallback
-  (`src/lazy/prefetch.js`) plus whichever standard body's chain the
-  primary kernel already prefetched. What's *not* handled: a custom
-  body expressed relative to a center that isn't resolvable either
-  within its own file or by anything already loaded (e.g. relative to
-  a second custom body from a *different* file, or to a body not among
-  the ten standard ones and not itself loaded) -- that fails to
+- **Custom kernel loading doesn't chain through a second custom
+  kernel with insufficient coverage of its own.** "Add a custom
+  kernel" (see `examples/browser-demo/README.md`) registers a custom
+  kernel's segments into the same pool the primary kernel uses, so a
+  custom body can be positioned relative to (or used as Center for)
+  any of the ten built-in bodies -- including a heliocentric
+  (Sun-relative) or other externally-anchored small-body/spacecraft
+  kernel, a chain spanning multiple hops fully contained within the
+  custom file itself, and a custom kernel whose own valid interval is
+  nowhere near "now" (`prefetchCustomBody()`'s hop-by-hop fallback,
+  `examples/browser-demo/index.html`, widening whichever already-known
+  body's own coverage the chain resolves through via
+  `ensureBodyCoverage()`, not just probing it once at session start).
+  What's *not* handled: a custom body expressed relative to a body
+  that's itself a *different* custom-kernel body whose own already-
+  prefetched interval doesn't cover the window needed -- that fails to
   prefetch with a clear error rather than being silently stitched
-  together.
+  together (custom bodies have no `.remote` to widen further once
+  loaded, by design -- their own interval is fetched in full up front).
