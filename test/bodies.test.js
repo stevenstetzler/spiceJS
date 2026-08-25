@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bodyCode } from '../src/bodies.js';
+import { bodyCode, bodyName } from '../src/bodies.js';
 import { KernelPool } from '../src/pool.js';
 
 test('resolves common body names', () => {
@@ -50,4 +50,39 @@ test('a pool-defined name can override a built-in one', () => {
   pool.putValues('NAIF_BODY_NAME', ['EARTH']);
   pool.putValues('NAIF_BODY_CODE', [-999]);
   assert.equal(bodyCode('EARTH', pool), -999);
+});
+
+test('bodyName resolves common IDs to names', () => {
+  // BODY_IDS lists more than one alias for some codes (e.g. both
+  // 'MARS_BARYCENTER' and 'MARS BARYCENTER' map to 4) -- bodyName()
+  // returns whichever is declared first, same tie-break bodyCode()'s
+  // reverse direction doesn't need to make.
+  assert.equal(bodyName(399), 'EARTH');
+  assert.equal(bodyName(4), 'MARS_BARYCENTER');
+  assert.equal(bodyName(0), 'SOLAR_SYSTEM_BARYCENTER');
+});
+
+test('bodyName falls back to "Body <id>" for an unrecognized ID -- never throws', () => {
+  assert.equal(bodyName(10231104), 'Body 10231104');
+  assert.equal(bodyName(-1234567), 'Body -1234567');
+});
+
+test('bodyName is the exact reverse of bodyCode for a round trip through a built-in name', () => {
+  assert.equal(bodyCode(bodyName(399)), 399);
+});
+
+test('a pool-defined NAIF_BODY_CODE/NAIF_BODY_NAME pair takes priority for bodyName too', () => {
+  const pool = new KernelPool();
+  pool.putValues('NAIF_BODY_NAME', ['MYSAT']);
+  pool.putValues('NAIF_BODY_CODE', [-100]);
+  assert.equal(bodyName(-100, pool), 'MYSAT');
+  // Built-in codes still resolve when not overridden.
+  assert.equal(bodyName(399, pool), 'EARTH');
+});
+
+test('a pool-defined name can override a built-in one for bodyName too', () => {
+  const pool = new KernelPool();
+  pool.putValues('NAIF_BODY_NAME', ['NOT EARTH']);
+  pool.putValues('NAIF_BODY_CODE', [399]);
+  assert.equal(bodyName(399, pool), 'NOT EARTH');
 });

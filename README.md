@@ -35,9 +35,10 @@ rather than relying on documentation and hand derivation alone — see
   (two-body/Keplerian propagation), **8/9** (Lagrange), and **12/13**
   (Hermite) are all supported — essentially every publicly distributed
   planetary/lunar/satellite/spacecraft kernel.
-- **Body name lookup** — a ~692-entry built-in NAIF ID/name table
-  (`src/bodies.js`), overridable/extendable by a loaded kernel's own
-  `NAIF_BODY_NAME`/`NAIF_BODY_CODE` pool variables.
+- **Body name lookup**, both directions (`bodyCode()`/`bodyName()`) —
+  a ~692-entry built-in NAIF ID/name table (`src/bodies.js`),
+  overridable/extendable by a loaded kernel's own `NAIF_BODY_NAME`/
+  `NAIF_BODY_CODE` pool variables.
 - **Reference frames** — the 21 built-in inertial frames (`J2000`,
   `ECLIPJ2000`, `B1950`, `GALACTIC`, ...), ~123 built-in body-fixed
   frames (`IAU_MARS`, `IAU_EARTH`, `IAU_MOON`, ...), and frames defined
@@ -120,8 +121,10 @@ loading, no download or CORS setup needed.
 
 The demo plots ten Solar System bodies with three.js: explicit view
 controls (Center, Frame, Rotating, Orbit, Period) and per-body actions
-(Look, From) drive the whole-system view, or Command+Click a body for
-a true-to-scale single-body-and-its-moons view. See
+(Look, From) drive the whole-system view, Command+Click a body for a
+true-to-scale single-body-and-its-moons view, or load your own `.bsp`
+to add extra bodies (asteroids, comets, spacecraft) onto the live
+session. See
 [`examples/browser-demo/README.md`](examples/browser-demo/README.md)
 for the full feature rundown.
 

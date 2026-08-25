@@ -62,3 +62,14 @@ answer — unless noted otherwise.
   real radii in `pck00011.tpc`, so they can't be rendered to scale the
   way the catalogued `sat441.bsp` moons are. Revisit if a future PCK
   release adds radii for them.
+- **Custom kernel loading doesn't chain across files.** "Add a custom
+  kernel" (see `examples/browser-demo/README.md`) registers a custom
+  kernel's segments into the same pool the primary kernel uses, so a
+  custom body can be positioned relative to (or used as Center for)
+  any of the ten built-in bodies -- but only if the custom kernel's
+  own segments chain all the way back to the Solar System Barycenter
+  *within that one file*. A custom body expressed relative to a center
+  that's only resolvable via the *primary* kernel's own segments (e.g.
+  relative to Earth, with Earth's own chain to the SSB only available
+  in the loaded DE440/DE440s file) fails to prefetch with a clear
+  error rather than being silently stitched together across files.
