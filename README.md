@@ -119,16 +119,20 @@ npm run serve-example
 Then open **http://localhost:8080/examples/browser-demo/**. This
 serves the repo *and* a local proxy that streams NAIF kernels on
 demand via HTTP range requests (so even a multi-gigabyte kernel costs
-a few hundred KB to open) — the demo detects it and offers one-click
-loading, no download or CORS setup needed.
+a few hundred KB to open) — the demo detects the proxy and auto-loads
+`de440s` through it, so the page opens already showing the live Solar
+System, no click needed.
 
 The demo plots ten Solar System bodies with three.js: explicit view
-controls (Center, Frame, Rotating, Orbit, Period) and per-body actions
-(Look, From) drive the whole-system view, Command+Click a body for a
-true-to-scale single-body-and-its-moons view, or load your own `.bsp`
--- or fetch one live from [JPL Horizons](https://ssd.jpl.nasa.gov/horizons/)
-by name or designation -- to add extra bodies (asteroids, comets,
-spacecraft) onto the live session. See
+controls (Center, Frame, Rotating, Orbit, Period, Position scale,
+Radius scale) and per-body actions (Look, From) drive the whole-system
+view, Command+Click a body for a true-to-scale single-body-and-its-moons
+view, or load your own `.bsp` -- or fetch one live from
+[JPL Horizons](https://ssd.jpl.nasa.gov/horizons/) by name or
+designation -- to add extra bodies (asteroids, comets, spacecraft,
+even unbound flyby/escape trajectories) onto the live session, each
+rendered with the same real orbit-ellipse (or, if unbound, open-arc)
+treatment as the ten built-in bodies. See
 [`examples/browser-demo/README.md`](examples/browser-demo/README.md)
 for the full feature rundown.
 
