@@ -126,8 +126,9 @@ The demo plots ten Solar System bodies with three.js: explicit view
 controls (Center, Frame, Rotating, Orbit, Period) and per-body actions
 (Look, From) drive the whole-system view, Command+Click a body for a
 true-to-scale single-body-and-its-moons view, or load your own `.bsp`
-to add extra bodies (asteroids, comets, spacecraft) onto the live
-session. See
+-- or fetch one live from [JPL Horizons](https://ssd.jpl.nasa.gov/horizons/)
+by name or designation -- to add extra bodies (asteroids, comets,
+spacecraft) onto the live session. See
 [`examples/browser-demo/README.md`](examples/browser-demo/README.md)
 for the full feature rundown.
 
