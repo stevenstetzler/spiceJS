@@ -104,11 +104,71 @@ function type5Segment({ target, center, gm, pvinit, ets }) {
   };
 }
 
+// Type 21 (extended difference lines): two records, each an
+// independently-verified closed-form arc (see test/spk.test.js's own
+// type 21 tests for the full derivation from spke21.c's literal
+// recurrence) -- record 0 constant acceleration, record 1 constant
+// jerk (so the recurrence loop itself, not just its degenerate
+// zero-iteration case, is exercised here too). This is real CSPICE's
+// own *reader* (spkr21_/spke21_) being cross-checked against
+// spiceJS's -- spiceypy has no type 21 *writer* to compare against
+// (`spkw21` isn't wrapped), so spiceJS's own encoder
+// (test/helpers/writeSpk.js) is the only way to produce these bytes,
+// same as every other type here; what's actually being validated is
+// whether CSPICE's reader agrees with spiceJS's on the same bytes.
+function type21Segment({ target, center, t1, order1, order2 }) {
+  // Every record in one type 21 segment shares a single `maxdim`
+  // (stored once, in the segment's own trailer -- see
+  // interpolatedRecord.js's readDifferenceLine()), so record1's own
+  // g/dt are padded out to order2's maxdim=2 even though it never
+  // reads the second slot (kqmax1=2 means mq2=0, so g is never read
+  // at all, and kq=[1,1,1] means only dt[axis][0] is ever summed).
+  //
+  // `epochs[i]` is difference line i's own *coverage end time*, not
+  // its reference epoch `tl` (confirmed against spkw21.c's own
+  // Detailed_Input -- see interpolatedRecord.js's module doc comment)
+  // -- record1 (order1) covers everything up to and including t1,
+  // record2 (order2) covers from just after t1 through the segment's
+  // own stop time (RADIUS).
+  const record1 = {
+    tl: 0,
+    g: [1, 1], // g[1] padding -- never read (mq2=0 for kqmax1=2)
+    refPos: order1.refPos,
+    refVel: order1.refVel,
+    dt: order1.a.map((a) => [a, 0]), // dt[axis][1] padding -- never read (kq=1)
+    kqmax1: 2,
+    kq: [1, 1, 1],
+  };
+  // record2 picks up exactly where record1 leaves off at t1 (continuous position/velocity).
+  const p1 = order1.refPos.map((p, i) => p + order1.refVel[i] * t1 + 0.5 * order1.a[i] * t1 * t1);
+  const v1 = order1.refVel.map((v, i) => v + order1.a[i] * t1);
+  const record2 = {
+    tl: t1,
+    g: [order2.g0, 1],
+    refPos: p1,
+    refVel: v1,
+    dt: order2.a.map((a, i) => [a, order2.jerk[i] * order2.g0]),
+    kqmax1: 3,
+    kq: [2, 2, 2],
+  };
+  return {
+    target,
+    center,
+    frame: 1,
+    type: 21,
+    startEt: -RADIUS,
+    stopEt: RADIUS,
+    epochs: [t1, RADIUS],
+    records: [record1, record2],
+  };
+}
+
 // 499 ("Mars") rel. 10 ("Sun"); 10 rel. 0 (SSB, nonzero velocity so
 // stellar aberration isn't a degenerate no-op); 399 ("Earth", type 3)
 // direct rel. SSB; 301 ("Moon") rel. 399, three hops from the SSB.
 // 599/699/799/899/999 (unused real planet IDs, borrowed as convenient
-// distinct target codes) rel. 10, one each of types 8/9/12/13/5.
+// distinct target codes) rel. 10, one each of types 8/9/12/13/5. 199
+// ("Mercury", likewise unused) rel. 10, type 21.
 const segments = [
   linearType2({ target: 499, center: 10, p0: [2.2e8, 1.5e8, 5e6], v0: [15, -8, 3] }),
   linearType2({ target: 10, center: 0, p0: [0, 0, 0], v0: [0.01, -0.005, 0.002] }),
@@ -157,6 +217,36 @@ const segments = [
     pvinit: [1.5e8, 0, 0, 0, 27, 5], // an eccentric heliocentric-scale orbit
     ets: UNEQUAL_STEP_ETS,
   }),
+  type21Segment({
+    target: 199,
+    center: 10,
+    t1: 1.0e6, // between ets' -1.0e6 and 2500000 -- record 0 covers the ets below it, record 1 the rest
+    order1: {
+      refPos: [1.3e8, 4.0e7, 1.0e6],
+      refVel: [10, 25, 0.5],
+      a: [1.0e-6, -5.0e-7, 2.0e-7], // heliocentric-scale accelerations (~GM_sun/r^2)
+    },
+    order2: {
+      g0: 1,
+      // Much smaller than order1's own accelerations: record 2's own
+      // domain runs all the way out to RADIUS (~4.8e7s past t1, ~1.5
+      // years) since epochs[1] must be >= the segment's own stopEt
+      // (spkw21.c's Exception 7 -- see interpolatedRecord.js's module
+      // doc comment), and a real ODP-fitted difference line is only
+      // ever extrapolated over a few hours to days, not years -- at
+      // order1's own scale (~1e-6 km/s^2, ~1e-13 km/s^3) that far an
+      // extrapolation produces a wildly unphysical (~100s of km/s)
+      // velocity, which in turn amplifies the light-time-correction
+      // central difference's truncation error (see spkez()'s own
+      // VELOCITY_DERIVATIVE_STEP_S comment) past crossval's tolerance
+      // -- a fixture artifact, not a spiceJS bug (confirmed: position,
+      // and every abcorr's velocity at the *nearer* et=2500000 case,
+      // all matched CSPICE exactly). Scaled down ~40x/~1e4x from the
+      // original values so even the RADIUS-distant case stays sane.
+      a: [5.0e-8, -7.5e-9, 2.5e-9],
+      jerk: [2.0e-15, 1.0e-15, -4.0e-16],
+    },
+  }),
 ];
 
 fs.writeFileSync(path.join(fixturesDir, 'kernel.bsp'), writeSpk({ segments }));
@@ -188,10 +278,12 @@ for (const et of ets) {
     spkezCases.push({ target: 799, center: 10, et, abcorr }); // type 12
     spkezCases.push({ target: 899, center: 10, et, abcorr }); // type 13
     spkezCases.push({ target: 999, center: 10, et, abcorr }); // type 5
+    spkezCases.push({ target: 199, center: 10, et, abcorr }); // type 21
   }
   spkezCases.push({ target: 599, center: 0, et, abcorr: 'LT+S' }); // chained via 10
   spkezCases.push({ target: 899, center: 0, et, abcorr: 'CN+S' });
   spkezCases.push({ target: 999, center: 0, et, abcorr: 'LT+S' }); // type 5, chained via 10
+  spkezCases.push({ target: 199, center: 0, et, abcorr: 'LT+S' }); // type 21, chained via 10
 }
 
 // ref: rotate into a handful of the 21 built-in inertial frames --

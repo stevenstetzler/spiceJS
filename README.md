@@ -32,9 +32,12 @@ rather than relying on documentation and hand derivation alone — see
   (`spkState()`) and chained, aberration-corrected queries across
   arbitrary target/observer pairs by NAIF ID (`spkez()`) or body
   **name** (`spkezr()`). Segment types **2/3** (Chebyshev), **5**
-  (two-body/Keplerian propagation), **8/9** (Lagrange), and **12/13**
-  (Hermite) are all supported — essentially every publicly distributed
-  planetary/lunar/satellite/spacecraft kernel.
+  (two-body/Keplerian propagation), **8/9** (Lagrange), **12/13**
+  (Hermite), and **21** (extended difference lines — the format JPL
+  Horizons exports small-body/comet trajectories in) are all
+  supported — essentially every publicly distributed
+  planetary/lunar/satellite/spacecraft kernel, plus custom
+  Horizons-generated ones.
 - **Body name lookup**, both directions (`bodyCode()`/`bodyName()`) —
   a ~692-entry built-in NAIF ID/name table (`src/bodies.js`),
   overridable/extendable by a loaded kernel's own `NAIF_BODY_NAME`/

@@ -25,16 +25,17 @@ answer — unless noted otherwise.
 - **Spacecraft clock (SCLK) time strings**, and general time zones
   beyond the handful `str2et_c` itself documents (the U.S. zones, and
   `UTC±H:MM`).
-- **Lazy-loading Phase 4**: SPK/PCK segment types 5/9/13 with a large
-  epoch count (`N`) use an on-disk directory (one entry per 100
-  epochs) in the real format specifically so a reader can binary-search
-  it instead of reading the whole epoch array. `readUnequalStepEpochs()`
-  currently always reads the full array and explicitly skips the
-  directory — fine for the small/medium-`N` kernels tested so far, but
-  not optimal for a very-high-cadence kernel (hundreds of thousands of
-  epochs or more). Needs a source-verification pass against
-  `spkr09.c`/`spkr05.c` in the OpenSpace/Spice mirror before it can be
-  scoped precisely — see `docs/lazy-loading.md`'s "Phase 4" section.
+- **Lazy-loading Phase 4**: SPK/PCK segment types 5/9/13/21 with a
+  large epoch/record count (`N`) use an on-disk directory (one entry
+  per 100) in the real format specifically so a reader can
+  binary-search it instead of reading the whole epoch array.
+  `readUnequalStepEpochs()` currently always reads the full array and
+  explicitly skips the directory — fine for the small/medium-`N`
+  kernels tested so far, but not optimal for a very-high-cadence
+  kernel (hundreds of thousands of epochs/records or more). Needs a
+  source-verification pass against `spkr09.c`/`spkr05.c`/`spkr21.c` in
+  the OpenSpace/Spice mirror before it can be scoped precisely — see
+  `docs/lazy-loading.md`'s "Phase 4" section.
 - **Partial/range-based caching for `load()`'s own cache layer.**
   `createMemoryCache()`/`createIndexedDbCache()` (`src/cache.js`) are a
   plain key(URL)/whole-value store — a cache miss re-downloads the

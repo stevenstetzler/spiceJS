@@ -9,15 +9,16 @@
  * handled by any change to `spk.js`/`chebyshevRecord.js` themselves.
  *
  * Async, uniformly, even though types 2/3/8/12's own math needs no
- * further fetch beyond the segment's own epilog: types 5/9/13 need a
- * genuinely data-dependent, multi-step fetch (the epoch array has to
- * be read before the touched window/bracket is even known -- see
- * `unequalStepByteRange()` below), so this function's shape has to
- * accommodate that from the start. Type 5/9/13 support here is the
- * "small-N" case from `docs/lazy-loading.md`'s Phase 3 -- large-N
- * kernels of these types need the on-disk epoch directory
- * (`interpolatedRecord.js` doesn't implement it, and neither does
- * this), scoped separately as that document's Phase 4.
+ * further fetch beyond the segment's own epilog: types 5/9/13/21 need
+ * a genuinely data-dependent, multi-step fetch (the epoch array has to
+ * be read before the touched window/bracket/record is even known --
+ * see `unequalStepByteRange()`/`type21ByteRange()` below), so this
+ * function's shape has to accommodate that from the start. Type
+ * 5/9/13/21 support here is the "small-N" case from
+ * `docs/lazy-loading.md`'s Phase 3 -- large-N kernels of these types
+ * need the on-disk epoch directory (`interpolatedRecord.js` doesn't
+ * implement it, and neither does this), scoped separately as that
+ * document's Phase 4.
  */
 import { readEpilog } from '../math/chebyshevRecord.js';
 import {
@@ -25,6 +26,7 @@ import {
   readUnequalStepTrailer,
   unequalStepIndexRangeForQuery,
   bracketingIndexRangeForQuery,
+  differenceLineIndexRangeForQuery,
 } from '../math/interpolatedRecord.js';
 
 const STATE_WORDS = 6; // [x, y, z, vx, vy, vz]
@@ -109,6 +111,32 @@ async function unequalStepByteRange(remoteFile, segment, etStart, etEnd) {
   return { startByte: (wordStart - 1) * 8, endByteExclusive: (wordEndExclusive - 1) * 8 };
 }
 
+/**
+ * Type 21 (extended difference lines, spkr21.c): same two-fetch shape
+ * as `unequalStepByteRange()` above (the trailer/epoch/directory
+ * layout is byte-for-byte the same family -- see
+ * `interpolatedRecord.js`'s own doc comment), but each record is
+ * `4*maxdim+11` words instead of a fixed 6-word state (`maxdim` is
+ * exactly the trailer's own `trailerField`, read in the first fetch),
+ * and exactly *one* record is touched per `et` rather than a window
+ * or bracketing pair -- `differenceLineIndexRangeForQuery()` is the
+ * type 21 counterpart to `bracketingIndexRangeForQuery()`.
+ */
+async function type21ByteRange(remoteFile, segment, etStart, etEnd) {
+  const trailerRange = trailerByteRange(segment, 2);
+  await remoteFile.ensureRange(trailerRange.startByte, trailerRange.endByteExclusive);
+
+  const { trailerField: maxdim, epochsStart, epochsEnd } = readUnequalStepTrailer(segment);
+  const epochByteRange = { startByte: (epochsStart - 1) * 8, endByteExclusive: epochsEnd * 8 };
+  await remoteFile.ensureRange(epochByteRange.startByte, epochByteRange.endByteExclusive);
+
+  const { firstIndex, lastIndexExclusive } = differenceLineIndexRangeForQuery(segment, etStart, etEnd);
+  const dlsiz = 4 * maxdim + 11;
+  const wordStart = segment.startAddr + firstIndex * dlsiz;
+  const wordEndExclusive = segment.startAddr + lastIndexExclusive * dlsiz;
+  return { startByte: (wordStart - 1) * 8, endByteExclusive: (wordEndExclusive - 1) * 8 };
+}
+
 const BYTE_RANGE_BY_TYPE = {
   2: chebyshevByteRange,
   3: chebyshevByteRange,
@@ -117,6 +145,7 @@ const BYTE_RANGE_BY_TYPE = {
   9: unequalStepByteRange,
   12: equalStepByteRange,
   13: unequalStepByteRange,
+  21: type21ByteRange,
 };
 
 /**
@@ -130,7 +159,7 @@ export async function byteRangeForQuery(remoteFile, segment, etStart, etEnd) {
   const handler = BYTE_RANGE_BY_TYPE[segment.type];
   if (!handler) {
     throw new Error(
-      `lazy: segment type ${segment.type} is not supported for lazy loading yet (supported so far: 2, 3, 5, 8, 9, 12, 13)`
+      `lazy: segment type ${segment.type} is not supported for lazy loading yet (supported so far: 2, 3, 5, 8, 9, 12, 13, 21)`
     );
   }
   return handler(remoteFile, segment, etStart, etEnd);

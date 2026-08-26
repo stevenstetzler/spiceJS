@@ -333,6 +333,60 @@ test('prefetchSpkQuery + ordinary spkez() for a type 5 (two-body propagation) se
   assert.throws(() => spkez(499, 0, 700, 'NONE', null, pool), /was not prefetched/);
 });
 
+test('prefetchSpkQuery + ordinary spkez() for a type 21 (extended difference lines) segment', async () => {
+  // Two records, each an independently-verified constant-acceleration
+  // arc (see test/spk.test.js's own type 21 tests for the closed-form
+  // derivation) -- record 0 covers everything up to and including
+  // t1=50, record 1 everything after through the segment's own stop
+  // time (`epochs[i]` is each record's own *coverage end time*, not
+  // its reference epoch `tl` -- see interpolatedRecord.js's module
+  // doc comment).
+  const a0 = [0.01, 0, 0];
+  const t1 = 50;
+  const p1 = [0.5 * a0[0] * t1 * t1, 0, 0];
+  const v1 = [a0[0] * t1, 0, 0];
+  const a1 = [0.02, 0, 0];
+  const record = (tl, refPos, refVel, a) => ({
+    tl,
+    g: [1],
+    refPos,
+    refVel,
+    dt: [[a[0]], [a[1]], [a[2]]],
+    kqmax1: 2,
+    kq: [1, 1, 1],
+  });
+  const seg = {
+    target: 499,
+    center: 0,
+    frame: 1,
+    type: 21,
+    startEt: -1000,
+    stopEt: 1000,
+    epochs: [t1, 1000],
+    records: [record(0, [0, 0, 0], [0, 0, 0], a0), record(t1, p1, v1, a1)],
+  };
+  const buf = writeSpk({ segments: [seg] });
+  // A fine blockBytes here, deliberately -- same reasoning as the type
+  // 5 test above (this tiny synthetic file's 2 records are close
+  // enough together in byte terms that a coarser block size would
+  // coincidentally sweep the unprefetched record's bytes into the
+  // same populated blocks as the prefetched one).
+  const { remoteFile } = fakeRemoteFile(buf, { blockBytes: 8 });
+  const pool = new KernelPool();
+
+  await prefetchSpkQuery(remoteFile, pool, { target: 499, observer: 0, etStart: 10, etEnd: 10 });
+
+  const { position, velocity } = spkez(499, 0, 10, 'NONE', null, pool);
+  closeTo(position[0], 0.5 * a0[0] * 100, 1e-9); // delta=10: 0.5*0.01*100
+  closeTo(velocity[0], a0[0] * 10, 1e-9);
+
+  // 90 is within the segment's overall [-1000, 1000] coverage, and
+  // even within record 1's own real applicability (t1=50 onward), but
+  // record 1's own bytes were never prefetched -- only record 0's
+  // (the one covering et=10) were.
+  assert.throws(() => spkez(499, 0, 90, 'NONE', null, pool), /was not prefetched/);
+});
+
 test('prefetchSpkBodySegment: fetches only the local hop, no chain-to-SSB requirement', async () => {
   // A "heliocentric" fixture: the target's own segment is relative to
   // a center (10, standing in for the Sun) that this file itself has

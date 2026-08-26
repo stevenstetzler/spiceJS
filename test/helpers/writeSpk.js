@@ -3,17 +3,18 @@
  * synthetic .bsp fixtures so spk.js/daf.js can be round-trip tested
  * without a real (multi-megabyte, network-fetched) kernel file. Only
  * supports what's needed for that: a single summary record (up to 25
- * segments) of type 2/3/5/8/9/12/13 data, both endiannesses.
+ * segments) of type 2/3/5/8/9/12/13/21 data, both endiannesses.
  *
  * This is the mirror image of src/daf.js + src/spk.js's decoding, so
  * it necessarily encodes the *same* understanding of the format --
  * see src/daf.js's doc comment for the byte layout this follows, and
- * src/math/interpolatedRecord.js's doc comment for types 5/8/9/12/13's
- * layout specifically. Types 5/9/13 (unequal time step) segments are
- * capped at 100 states here so the on-disk "directory" (a lookup-speed
- * optimization for segments with more states than that) never needs
- * writing -- spiceJS's own reader ignores the directory regardless,
- * but a real CSPICE-compatible file needs it present for N > 100.
+ * src/math/interpolatedRecord.js's doc comment for types 5/8/9/12/13/21's
+ * layout specifically. Types 5/9/13/21 (unequal time step) segments
+ * are capped at 100 states/records here so the on-disk "directory" (a
+ * lookup-speed optimization for segments with more than that) never
+ * needs writing -- spiceJS's own reader ignores the directory
+ * regardless, but a real CSPICE-compatible file needs it present
+ * beyond that count.
  */
 import { Buffer } from 'node:buffer';
 
@@ -48,6 +49,19 @@ const MAX_SEGMENTS_PER_RECORD = 25; // (128 - 3) / 5, for SPK's ND=2,NI=6 -> 5 w
  *     epochs: number[]` (same length as `states`, <= 100 entries --
  *     see the module doc comment) -- identical on-disk shape to 9/13,
  *     just `gm` in the trailer slot instead of `degree`.
+ *   - 21 (extended difference lines): `epochs: number[], records:
+ *     object[]` (same length as `epochs`, <= 100 entries -- see the
+ *     module doc comment), each record `{ tl, g: number[], refPos:
+ *     number[3], refVel: number[3], dt: [number[], number[], number[]],
+ *     kqmax1, kq: number[3] }` -- exactly interpolatedRecord.js's
+ *     readDifferenceLine() shape. Every record must share the same
+ *     `g`/`dt` axis length (`maxdim`, stored once in the segment
+ *     trailer, same as 5/9/13's `degree`/`gm`). Unlike 5/9/13, `epochs[i]`
+ *     here is record `i`'s own *coverage end time*, not its epoch/`tl`
+ *     -- record 0 covers `[startEt, epochs[0]]`, record `i>0` covers
+ *     `(epochs[i-1], epochs[i]]`, and a well-formed segment's last
+ *     `epochs` entry must be `>= stopEt` (see interpolatedRecord.js's
+ *     module doc comment for why).
  * @returns {Buffer}
  */
 export function writeSpk({ littleEndian = true, segments }) {
@@ -57,6 +71,32 @@ export function writeSpk({ littleEndian = true, segments }) {
   for (const seg of segments) {
     if ((seg.type === 5 || seg.type === 9 || seg.type === 13) && seg.states.length > 100) {
       throw new Error('writeSpk (test helper): type 5/9/13 segments are capped at 100 states (no directory support)');
+    }
+    if (seg.type === 21 && seg.records.length > 100) {
+      throw new Error('writeSpk (test helper): type 21 segments are capped at 100 records (no directory support)');
+    }
+    if (seg.type === 21) {
+      // Every record's own size (dlsiz = 4*maxdim+11) has to match the
+      // *segment's* single maxdim -- laid out once, from records[0],
+      // below -- since real spkr21_ (and this reader) only ever store/
+      // read one maxdim per segment, not per record. A record with a
+      // different g/dt length would silently write past its own
+      // allotted slot into the next record (or the epoch array/trailer,
+      // for the last one) -- caught here as a clear error instead,
+      // rather than corrupting adjacent bytes silently (confirmed live:
+      // exactly this mistake, uncaught, produced a bogus giant
+      // maxdim/N read back from the corrupted trailer that made the
+      // reader appear to hang).
+      const maxdim = seg.records[0].g.length;
+      for (const [i, record] of seg.records.entries()) {
+        if (record.g.length !== maxdim || record.dt.some((axis) => axis.length !== maxdim)) {
+          throw new Error(
+            `writeSpk (test helper): type 21 record ${i} has g/dt length ${record.g.length}/` +
+              `${record.dt.map((axis) => axis.length).join(',')}, but the segment's own maxdim ` +
+              `(from record 0) is ${maxdim} -- every record in a segment must share one maxdim`
+          );
+        }
+      }
     }
   }
 
@@ -85,6 +125,13 @@ export function writeSpk({ littleEndian = true, segments }) {
       const startAddr = addr;
       addr += seg.states.length * 6 + seg.states.length + 2; // states + epochs + [degree|gm, N] (no directory)
       return { ...seg, startAddr, endAddr: addr - 1 };
+    }
+    if (seg.type === 21) {
+      const maxdim = seg.records[0].g.length;
+      const dlsiz = 4 * maxdim + 11;
+      const startAddr = addr;
+      addr += seg.records.length * dlsiz + seg.epochs.length + 2; // records + epochs + [maxdim, N] (no directory)
+      return { ...seg, maxdim, dlsiz, startAddr, endAddr: addr - 1 };
     }
     throw new Error(`writeSpk (test helper): unsupported segment type ${seg.type}`);
   });
@@ -195,6 +242,46 @@ export function writeSpk({ littleEndian = true, segments }) {
       // No directory: writeSpk() already rejected states.length > 100.
       writeDouble(buf, byteOffset, seg.gm);
       writeDouble(buf, byteOffset + 8, seg.states.length);
+    } else if (seg.type === 21) {
+      // One "extended difference line" per record -- layout exactly
+      // matches interpolatedRecord.js's readDifferenceLine() (itself
+      // confirmed against spke21.c's Detailed_Input): [TL, G(maxdim),
+      // refPos/refVel interleaved (6), DT_x/DT_y/DT_z (maxdim each),
+      // KQMAX1, KQ(3)] -- 4*maxdim+11 words per record.
+      let byteOffset = (seg.startAddr - 1) * 8;
+      for (const record of seg.records) {
+        writeDouble(buf, byteOffset, record.tl);
+        byteOffset += 8;
+        for (const g of record.g) {
+          writeDouble(buf, byteOffset, g);
+          byteOffset += 8;
+        }
+        for (let axis = 0; axis < 3; axis++) {
+          writeDouble(buf, byteOffset, record.refPos[axis]);
+          byteOffset += 8;
+          writeDouble(buf, byteOffset, record.refVel[axis]);
+          byteOffset += 8;
+        }
+        for (let axis = 0; axis < 3; axis++) {
+          for (const d of record.dt[axis]) {
+            writeDouble(buf, byteOffset, d);
+            byteOffset += 8;
+          }
+        }
+        writeDouble(buf, byteOffset, record.kqmax1);
+        byteOffset += 8;
+        for (const kq of record.kq) {
+          writeDouble(buf, byteOffset, kq);
+          byteOffset += 8;
+        }
+      }
+      for (const epoch of seg.epochs) {
+        writeDouble(buf, byteOffset, epoch);
+        byteOffset += 8;
+      }
+      // No directory: writeSpk() already rejected records.length > 100.
+      writeDouble(buf, byteOffset, seg.maxdim);
+      writeDouble(buf, byteOffset + 8, seg.epochs.length);
     }
   }
 

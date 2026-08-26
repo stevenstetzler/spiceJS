@@ -272,6 +272,167 @@ test('writeSpk rejects a type 5 segment with more than 100 states', () => {
   assert.throws(() => writeSpk({ segments: [seg] }), /capped at 100 states/);
 });
 
+// --- type 21: extended difference lines ---
+
+// Two independently hand-derived closed-form referees (worked out
+// directly from spke21.c's own recurrence, not just self-consistency
+// against spiceJS's own writer/reader), matching the same "closed-form
+// referee" strategy the type 5 tests above use:
+//
+// - Order 1 (kqmax1=2, kq=1): with mq2=kqmax1-2=0, the fc/wc loop
+//   never runs and g is never read at all; `sum` collapses to
+//   `dt[0]*w[1] = dt[0]*0.5` for position and `dt[0]*w[0] = dt[0]`
+//   for velocity (w's own initial fill, `w[j-1]=1/j`), which matches
+//   *constant acceleration* (`dt[0] = a`) exactly:
+//   `pos = refpos + refvel*delta + 0.5*a*delta^2`,
+//   `vel = refvel + a*delta`.
+// - Order 2 (kqmax1=3, kq=2): the recurrence runs once (jx=1), and
+//   choosing g[0]=1 makes `dt[1] = jerk` reproduce *constant jerk*
+//   (cubic position) exactly: `pos = refpos + refvel*delta +
+//   0.5*a*delta^2 + jerk*delta^3/6`, `vel = refvel + a*delta +
+//   0.5*jerk*delta^2`. This is the lowest order that actually
+//   exercises the W recurrence loop, not just its initial fill.
+//
+// Both derivations were verified independently before being encoded
+// here (worked through the literal recurrence by hand, then checked
+// against these exact formulas) -- see the commit history for the
+// full derivation, not reproduced in full here.
+
+function constantAccelerationRecord({ tl, refPos, refVel, a }) {
+  return { tl, g: [1], refPos, refVel, dt: [[a[0]], [a[1]], [a[2]]], kqmax1: 2, kq: [1, 1, 1] };
+}
+
+function constantJerkRecord({ tl, refPos, refVel, a, jerk, g0 = 1 }) {
+  return {
+    tl,
+    g: [g0, 1], // g[1] is never read (mq2=1 -- only g[0] matters)
+    refPos,
+    refVel,
+    dt: [
+      [a[0], jerk[0] * g0],
+      [a[1], jerk[1] * g0],
+      [a[2], jerk[2] * g0],
+    ],
+    kqmax1: 3,
+    kq: [2, 2, 2],
+  };
+}
+
+test('type 21: order-1 record (constant acceleration) matches the closed-form answer exactly', () => {
+  const refPos = [0, 0, 0];
+  const refVel = [1, 2, 3];
+  const a = [0.1, -0.2, 0.05];
+  const tl = 0;
+  const seg = {
+    target: 499,
+    center: 10,
+    frame: 1,
+    type: 21,
+    startEt: -1000,
+    stopEt: 1000,
+    epochs: [1000], // coverage end time (spkw21.c) -- this is the segment's only record, covering its whole declared interval
+    records: [constantAccelerationRecord({ tl, refPos, refVel, a })],
+  };
+  const [segment] = loadSpk(writeSpk({ segments: [seg] }));
+
+  for (const delta of [0, 5, -3, 100, -400]) {
+    const et = tl + delta;
+    const { position, velocity } = evaluateSegment(segment, et);
+    const expectedPos = refPos.map((p0, i) => p0 + refVel[i] * delta + 0.5 * a[i] * delta * delta);
+    const expectedVel = refVel.map((v0, i) => v0 + a[i] * delta);
+    position.forEach((p, i) => closeTo(p, expectedPos[i], 1e-9));
+    velocity.forEach((v, i) => closeTo(v, expectedVel[i], 1e-9));
+  }
+});
+
+test('type 21: order-2 record (constant jerk) exercises the W recurrence and still matches exactly', () => {
+  const refPos = [10, -5, 2];
+  const refVel = [1, 2, 3];
+  const a = [0.1, -0.2, 0.05];
+  const jerk = [0.02, 0.01, -0.03];
+  const tl = 100;
+  const seg = {
+    target: 499,
+    center: 10,
+    frame: 1,
+    type: 21,
+    startEt: -1000,
+    stopEt: 1000,
+    epochs: [1000], // coverage end time (spkw21.c) -- see the order-1 test above
+    records: [constantJerkRecord({ tl, refPos, refVel, a, jerk })],
+  };
+  const [segment] = loadSpk(writeSpk({ segments: [seg] }));
+
+  for (const delta of [0, 5, -3, 50, -80]) {
+    const et = tl + delta;
+    const { position, velocity } = evaluateSegment(segment, et);
+    const expectedPos = refPos.map(
+      (p0, i) => p0 + refVel[i] * delta + 0.5 * a[i] * delta ** 2 + (jerk[i] * delta ** 3) / 6
+    );
+    const expectedVel = refVel.map((v0, i) => v0 + a[i] * delta + 0.5 * jerk[i] * delta ** 2);
+    position.forEach((p, i) => closeTo(p, expectedPos[i], 1e-7));
+    velocity.forEach((v, i) => closeTo(v, expectedVel[i], 1e-9));
+  }
+});
+
+test('type 21: multi-record segments select the correct record by ET (the first one whose own coverage-end epoch is >= et)', () => {
+  // record 0 covers everything up to and including t=50 with one
+  // constant acceleration; record 1 picks up exactly where record 0
+  // leaves off (continuous position/velocity), covering everything
+  // after t=50 through the segment's own stop time, with a
+  // *different* acceleration -- only the right record being selected
+  // reproduces the right answer on both sides of the boundary.
+  //
+  // `epochs[i]` is each record's own *coverage end time* (spkw21.c's
+  // Detailed_Input), not its reference epoch `tl` -- record 0's
+  // coverage ends at t1 itself (inclusive), record 1's at the
+  // segment's own stop time.
+  const a0 = [0.01, 0, 0];
+  const t1 = 50;
+  const p1 = [0.5 * a0[0] * t1 * t1, 0, 0];
+  const v1 = [a0[0] * t1, 0, 0];
+  const a1 = [0.02, 0, 0];
+  const stopEt = 1000;
+  const seg = {
+    target: 499,
+    center: 10,
+    frame: 1,
+    type: 21,
+    startEt: -1000,
+    stopEt,
+    epochs: [t1, stopEt],
+    records: [
+      constantAccelerationRecord({ tl: 0, refPos: [0, 0, 0], refVel: [0, 0, 0], a: a0 }),
+      constantAccelerationRecord({ tl: t1, refPos: p1, refVel: v1, a: a1 }),
+    ],
+  };
+  const [segment] = loadSpk(writeSpk({ segments: [seg] }));
+
+  const expectedFrom = (tl, refPos, refVel, a, et) => {
+    const delta = et - tl;
+    return {
+      position: refPos.map((p0, i) => p0 + refVel[i] * delta + 0.5 * a[i] * delta * delta),
+      velocity: refVel.map((v0, i) => v0 + a[i] * delta),
+    };
+  };
+
+  for (const et of [0, 25, 49.999, 50, 50.001, 75, 100]) {
+    const { position, velocity } = evaluateSegment(segment, et);
+    const expected = et <= t1 ? expectedFrom(0, [0, 0, 0], [0, 0, 0], a0, et) : expectedFrom(t1, p1, v1, a1, et);
+    position.forEach((p, i) => closeTo(p, expected.position[i], 1e-7));
+    velocity.forEach((v, i) => closeTo(v, expected.velocity[i], 1e-9));
+  }
+});
+
+test('writeSpk rejects a type 21 segment with more than 100 records', () => {
+  const records = Array.from({ length: 101 }, (_, i) =>
+    constantAccelerationRecord({ tl: i * 60, refPos: [0, 0, 0], refVel: [0, 0, 0], a: [0, 0, 0] })
+  );
+  const epochs = records.map((r) => r.tl);
+  const seg = { target: 499, center: 10, frame: 1, type: 21, startEt: 0, stopEt: 6000, epochs, records };
+  assert.throws(() => writeSpk({ segments: [seg] }), /capped at 100 records/);
+});
+
 test('multi-record segments select the correct record by ET', () => {
   // record 1: position(t) = t, for t in [0, 100]           (v = +1 km/s)
   // record 2: position(t) = 200 - t, for t in [100, 200]   (v = -1 km/s)

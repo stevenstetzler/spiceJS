@@ -4,10 +4,10 @@
 `remoteFile.js`, `byteRange.js`, `prefetch.js`, `openRemoteSpk.js`,
 `pckPrefetch.js`, `openRemotePck.js`, plus `daf.js`'s `checkRange`
 hook) -- exported as `openRemoteSpk`/`openRemotePck`/`openRemoteFile`
-from both `src/index.js` and `src/browser.js`. Phase 4 (types 5/9/13's
-large-`N`, on-disk-directory case) remains a scoped-but-unimplemented
-placeholder, as planned -- it needs its own source-verification pass
-first. Re-ran this document's `de440s.bsp` worked example through the
+from both `src/index.js` and `src/browser.js`. Phase 4 (types
+5/9/13/21's large-`N`, on-disk-directory case) remains a
+scoped-but-unimplemented placeholder, as planned -- it needs its own
+source-verification pass first. Re-ran this document's `de440s.bsp` worked example through the
 *actual* implementation (not hand-rolled) after building it: **5 real
 HTTP requests, 285,696 bytes (0.87% of the 32,726,016-byte file)**,
 result matching `spiceypy` to full double precision. See "What actually
@@ -487,7 +487,23 @@ parts than 2/3/8/12's one-shot arithmetic, but reuses
 `interpolatedRecord.js`'s existing epoch-reading functions entirely
 unmodified.
 
-### Phase 4 -- types 9/13/5, large-`N` case (on-disk directory) -- not implemented, as planned
+**Type 21 (extended difference lines) added later, same phase.** Its
+epoch/directory layout is byte-for-byte the same family as 5/9/13 (see
+`interpolatedRecord.js`'s own doc comment) -- `readUnequalStepEpochs()`
+is reused completely unchanged, `trailerField` just means `maxdim`
+instead of a degree or GM. The real differences are record *selection*
+(exactly one record, the *first* whose own **coverage-end** epoch --
+not its reference epoch -- is `>= et`; no window or bracketing pair,
+and this is a genuinely different rule from 5/9/13's own bracketing,
+not just a relabeling -- see `interpolatedRecord.js`'s module doc
+comment for the real-CSPICE confirmation and the bug this caught) and
+record *size* (`4*maxdim+11` words, not a fixed 6-word state) --
+`differenceLineIndexRangeForQuery()` and `type21ByteRange()` are the
+type 21 counterparts of `unequalStepIndexRangeForQuery()`/
+`unequalStepByteRange()`, following this same two-step fetch shape
+unchanged.
+
+### Phase 4 -- types 9/13/5/21, large-`N` case (on-disk directory) -- not implemented, as planned
 
 This is the one phase that needs new *format-decoding* work, not just
 new *lazy-loading* work, and needs its own source-verification pass

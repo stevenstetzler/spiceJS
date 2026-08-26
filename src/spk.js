@@ -47,11 +47,28 @@
  * two-body motion (prop2b.js) and blending them (see evaluateType5()
  * below). See math/interpolatedRecord.js's selectBracketingPair() for
  * the (shared-with-9/13) on-disk layout.
+ *
+ * Type 21 (extended difference lines / Modified Difference Arrays --
+ * a generalized Type 1, the classic numerically-integrated-trajectory
+ * format used for e.g. JPL Horizons small-body/comet SPKs) is also
+ * supported. Its epoch/directory layout is the same family as 5/9/13
+ * (math/interpolatedRecord.js's selectDifferenceLine()), but each
+ * record is picked outright (the first one whose own *coverage end*
+ * epoch is `>= et` -- not its reference epoch, and no window or
+ * bracketing pair) and evaluated via its
+ * own modified-divided-difference recurrence (math/differenceArray.js's
+ * evaluateDifferenceLine()), not interpolated between neighbors.
  */
 import { parseDaf } from './daf.js';
 import { evaluate, evaluateWithDerivative } from './math/chebyshev.js';
 import { selectRecord } from './math/chebyshevRecord.js';
-import { selectEqualStepWindow, selectUnequalStepWindow, selectBracketingPair } from './math/interpolatedRecord.js';
+import {
+  selectEqualStepWindow,
+  selectUnequalStepWindow,
+  selectBracketingPair,
+  selectDifferenceLine,
+} from './math/interpolatedRecord.js';
+import { evaluateDifferenceLine } from './math/differenceArray.js';
 import { lagrangeInterpolate, hermiteInterpolate } from './math/lagrangeHermite.js';
 import { add, sub, scale, cross, norm, unit, rotateAboutAxis } from './math/vector3.js';
 import { globalPool } from './pool.js';
@@ -61,7 +78,7 @@ import { prop2b } from './prop2b.js';
 
 const SPK_ND = 2;
 const SPK_NI = 6;
-const SUPPORTED_TYPES = new Set([2, 3, 5, 8, 9, 12, 13]);
+const SUPPORTED_TYPES = new Set([2, 3, 5, 8, 9, 12, 13, 21]);
 
 const CLIGHT_KM_S = 299792.458; // exact, by SI definition of the meter
 const MAX_CHAIN_HOPS = 20; // matches NAIF's own CHLEN (spkgeo.f)
@@ -218,6 +235,12 @@ function evaluateType5(segment, et) {
   return { position, velocity };
 }
 
+/** Type 21 (extended difference lines): select the one record covering `et`, then its own MDA recurrence. See math/differenceArray.js. */
+function evaluateType21(segment, et) {
+  const record = selectDifferenceLine(segment, et);
+  return evaluateDifferenceLine(record, et);
+}
+
 /**
  * Evaluate a segment at `et` (TDB seconds past J2000), returning
  * `{ position: [x,y,z], velocity: [vx,vy,vz] }` in km and km/s, in
@@ -240,10 +263,12 @@ export function evaluateSegment(segment, et) {
       return evaluateHermite(segment, et, selectEqualStepWindow);
     case 13:
       return evaluateHermite(segment, et, selectUnequalStepWindow);
+    case 21:
+      return evaluateType21(segment, et);
     default:
       throw new Error(
         `spk: segment data type ${segment.type} is not supported yet (supported: 2, 3 -- Chebyshev; ` +
-          '5 -- two-body propagation; 8, 9 -- Lagrange; 12, 13 -- Hermite)'
+          '5 -- two-body propagation; 8, 9 -- Lagrange; 12, 13 -- Hermite; 21 -- extended difference lines)'
       );
   }
 }
