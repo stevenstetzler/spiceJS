@@ -198,6 +198,7 @@ what isn't, and what it's caught.
 
 | Topic | Where |
 | --- | --- |
+| Code structure — the three layers (core library, Horizons/CAD caching, visualization) and how they fit together | [`modules.md`](modules.md) |
 | Kernel catalogue, sizes, caveats | [`kernels/README.md`](kernels/README.md) |
 | Browser demo — full feature rundown | [`examples/browser-demo/README.md`](examples/browser-demo/README.md) |
 | Visualization API — the shared modules behind the curated demo pages | [`examples/shared/api.md`](examples/shared/api.md) |
