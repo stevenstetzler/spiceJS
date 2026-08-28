@@ -76,6 +76,14 @@ the full kernel size while actual disk use is only what was fetched --
 in one measured session, 4.95 GB of apparent kernels cost **22 MB** of
 real disk. Delete the directory any time; it all refetches on demand.
 
+`cache/horizons/` is a separate, much smaller cache: one whole SPK per
+small-body/comet fetched from [JPL Horizons](https://ssd.jpl.nasa.gov/horizons/)
+through the demo's own "Fetch from JPL Horizons" (`<spkid>.bsp` plus a
+`<spkid>.json` sidecar recording the date range it covers) -- see
+[`examples/browser-demo/README.md`](../examples/browser-demo/README.md#fetching-a-kernel-from-jpl-horizons)
+for how a re-request that only partly overlaps what's cached gets
+merged into a single wider re-fetch instead of a second, separate file.
+
 ## Caveats found by reading the real files
 
 - **Saturn's moons are split across two NAIF files, and only one is in
