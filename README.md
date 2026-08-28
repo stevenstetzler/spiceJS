@@ -157,7 +157,8 @@ the observer everything else is positioned relative to):
 `examples/shared/bodies.js`'s `bodySlug()`. These page *shapes* share
 their non-UI logic (scale math, orbit/trajectory sampling, prefetch,
 satellite resolution, the Horizons client) via plain ES modules under
-`examples/shared/`, imported by each page rather than copy-pasted --
+`examples/shared/` -- see [`examples/shared/api.md`](examples/shared/api.md)
+for what's in them -- imported by each page rather than copy-pasted --
 `examples/browser-demo/index.html` itself stays a single self-contained
 file, deliberately not refactored to share this code, so it remains the
 one place every feature is exercised at once.
@@ -199,6 +200,7 @@ what isn't, and what it's caught.
 | --- | --- |
 | Kernel catalogue, sizes, caveats | [`kernels/README.md`](kernels/README.md) |
 | Browser demo — full feature rundown | [`examples/browser-demo/README.md`](examples/browser-demo/README.md) |
+| Visualization API — the shared modules behind the curated demo pages | [`examples/shared/api.md`](examples/shared/api.md) |
 | Lazy/range-based loading — design, byte-range math, real numbers | [`docs/lazy-loading.md`](docs/lazy-loading.md) |
 | Running in a browser — CORS, bundling, entry points | [`docs/browser-support.md`](docs/browser-support.md) |
 | Cross-validation against spiceypy | [`crossval/README.md`](crossval/README.md) |
