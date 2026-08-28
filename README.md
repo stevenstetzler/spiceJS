@@ -136,6 +136,28 @@ treatment as the ten built-in bodies. See
 [`examples/browser-demo/README.md`](examples/browser-demo/README.md)
 for the full feature rundown.
 
+Four smaller, curated pages built on top of the same lazy-loading
+machinery -- each a fixed configuration rather than the full explorer's
+every-control-exposed design, all bounded to `de440s`'s 1900-2100
+range:
+
+| Page | Shows |
+| --- | --- |
+| `/solar-system/` | The ten built-in bodies, viewed from the Sun, orbit ellipses only. Includes a JPL Horizons search box (bounded to 1900-2100) for adding asteroids/comets. |
+| `/solar-system/trajectory/` | The same view, but every orbit line is a real sampled trajectory instead of an idealized ellipse. Supports uploading a local `.bsp` to add its own trajectory. |
+| `/<body>/` (e.g. `/earth/`, `/jupiter/`) | A true-to-scale (Linear position, Linear radius) view of one body and its known natural satellites, viewed from and looking at that body. |
+| `/<body>/trajectory/` | The same single-body system, with each satellite's orbit line a real sampled trajectory, and support for adding a custom trajectory (e.g. a spacecraft) to that system. |
+
+`<body>` is any of `sun`, `mercury`, `venus`, `earth`, `mars`,
+`jupiter`, `saturn`, `uranus`, `neptune`, `pluto` -- see
+`examples/shared/bodies.js`'s `bodySlug()`. These four page *shapes*
+share their non-UI logic (scale math, orbit/trajectory sampling,
+prefetch, satellite resolution, the Horizons client) via plain ES
+modules under `examples/shared/`, imported by each page rather than
+copy-pasted -- `examples/browser-demo/index.html` itself stays a single
+self-contained file, deliberately not refactored to share this code, so
+it remains the one place every feature is exercised at once.
+
 ## Development
 
 ```sh
