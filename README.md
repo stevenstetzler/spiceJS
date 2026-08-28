@@ -198,6 +198,7 @@ what isn't, and what it's caught.
 
 | Topic | Where |
 | --- | --- |
+| Install, run, and deploy — the library, the example site, and a real production deployment; plus live-measured bandwidth per view | [`deploy.md`](deploy.md) |
 | Code structure — the three layers (core library, Horizons/CAD caching, visualization) and how they fit together | [`modules.md`](modules.md) |
 | Kernel catalogue, sizes, caveats | [`kernels/README.md`](kernels/README.md) |
 | Browser demo — full feature rundown | [`examples/browser-demo/README.md`](examples/browser-demo/README.md) |
