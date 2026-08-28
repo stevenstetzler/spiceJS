@@ -22,7 +22,7 @@ import { INERTIAL_FRAMES } from './data/inertialFrames.js';
 import { BODY_FIXED_FRAMES } from './data/bodyFixedFrames.js';
 import { findPckSegment, evaluateSegment as evaluatePckSegment } from './pck.js';
 import { classicEulerAngles } from './bodyOrientation.js';
-import { tipmFromEulerAngles, composeAxisRotations, transpose3, multiply3 } from './math/eulerFrame.js';
+import { tipmFromEulerAngles, composeAxisRotations, transpose3, multiply3, identity3 } from './math/eulerFrame.js';
 import { globalPool } from './pool.js';
 
 const J2000 = 1;
@@ -155,6 +155,21 @@ function frameDefinition(id, pool) {
   );
 }
 
+/**
+ * Whether frame `id` is one of the 21 built-in inertial frames (class
+ * 1) -- the one case `frameRotationMatrix()` needs no `et` for, since
+ * a fixed rotation between two non-rotating frames doesn't depend on
+ * time. Used by `ck.js`'s `ckgp()` to skip requiring an SCLK kernel
+ * (needed only to convert ticks to `et`) when it isn't actually needed
+ * -- exactly `ckgp_`'s own `type1==1 && type2==1 -> et=0` shortcut.
+ *
+ * @param {number} id
+ * @returns {boolean}
+ */
+export function frameIsInertial(id) {
+  return INERTIAL_BY_ID.has(id);
+}
+
 function requireEt(et, id) {
   if (typeof et !== 'number' || !Number.isFinite(et)) {
     throw new Error(`frames: an ephemeris time (et) is required to resolve non-inertial frame ${id}`);
@@ -274,6 +289,39 @@ function resolveToJ2000(id, et, pool) {
 }
 
 /**
+ * The pure rotation matrix (and its time derivative) taking a vector
+ * expressed in `fromId` to the equivalent vector expressed in `toId`,
+ * at ephemeris time `et` -- NAIF's `REFCHG`. `rotateState()` below is
+ * the position/velocity-pair convenience built on top of this; `ck.js`
+ * uses this directly (a CK pointing request only ever needs the bare
+ * matrix, to compose with a C-matrix -- there's no "velocity" for an
+ * orientation to carry along). `et`/`pool` may be omitted only when
+ * both frames are inertial (class 1 -- their rotation doesn't depend
+ * on either).
+ *
+ * @param {number} fromId
+ * @param {number} toId
+ * @param {number} [et] - TDB seconds past J2000
+ * @param {import('./pool.js').KernelPool} [pool]
+ * @returns {{ matrix: number[][], dmatrix: number[][] }}
+ */
+export function frameRotationMatrix(fromId, toId, et, pool = globalPool) {
+  if (fromId === toId) {
+    return { matrix: identity3(), dmatrix: zero3() };
+  }
+
+  const from = resolveToJ2000(fromId, et, pool);
+  const to = resolveToJ2000(toId, et, pool);
+  const toJ2000ToTarget = transpose3(to.matrix);
+  const dToJ2000ToTarget = transpose3(to.dmatrix);
+
+  return {
+    matrix: multiply3(toJ2000ToTarget, from.matrix),
+    dmatrix: add3(multiply3(dToJ2000ToTarget, from.matrix), multiply3(toJ2000ToTarget, from.dmatrix)),
+  };
+}
+
+/**
  * Rotate a position/velocity pair from frame `fromId` to frame
  * `toId`, at ephemeris time `et`. Supports the 21 built-in inertial
  * frames, the built-in body-fixed (IAU_*) frames, and any frame
@@ -290,18 +338,7 @@ function resolveToJ2000(id, et, pool) {
  * @returns {{ position: number[], velocity: number[] }}
  */
 export function rotateState(fromId, toId, position, velocity, et, pool = globalPool) {
-  if (fromId === toId) {
-    return { position: position.slice(), velocity: velocity.slice() };
-  }
-
-  const from = resolveToJ2000(fromId, et, pool);
-  const to = resolveToJ2000(toId, et, pool);
-  const toJ2000ToTarget = transpose3(to.matrix);
-  const dToJ2000ToTarget = transpose3(to.dmatrix);
-
-  const r = multiply3(toJ2000ToTarget, from.matrix);
-  const dr = add3(multiply3(dToJ2000ToTarget, from.matrix), multiply3(toJ2000ToTarget, from.dmatrix));
-
+  const { matrix: r, dmatrix: dr } = frameRotationMatrix(fromId, toId, et, pool);
   return {
     position: multiplyVec(r, position),
     velocity: add3Vec(multiplyVec(r, velocity), multiplyVec(dr, position)),

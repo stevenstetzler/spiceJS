@@ -52,6 +52,8 @@ export function unloadKey(key, pool) {
     pool.removeSpkSegments(entry.segments);
   } else if (entry.type === 'pck') {
     pool.removePckSegments(entry.segments);
+  } else if (entry.type === 'ck') {
+    pool.removeCkSegments(entry.segments);
   }
   // 'meta' entries have nothing of their own to undo.
 

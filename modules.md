@@ -55,7 +55,7 @@ Both re-export the same public surface otherwise: `KernelPool`/`globalPool`,
 one-file-per-bullet (some files are small and paired):
 
 - **Kernel pool & loading** -- `pool.js` (the in-memory kernel pool:
-  text variables + SPK/PCK segment index), `kernels.js` (`furnsh`/`unload`/
+  text variables + SPK/PCK/CK segment index), `kernels.js` (`furnsh`/`unload`/
   `kclear`, Node-only), `load.js` (the async, environment-agnostic
   sibling of `furnsh` -- URL/`File`/`Blob`/raw-bytes), `kernelRegistry.js`
   (shared undo-history bookkeeping both of those build on),
@@ -66,23 +66,31 @@ one-file-per-bullet (some files are small and paired):
   all share), `cache.js` (pluggable whole-file caches for `load()`),
   `bytes.js` (`Buffer`/`ArrayBuffer`/typed-array normalization).
 - **Binary container/format readers** -- `daf.js` (the generic DAF
-  container SPK/PCK are both built on), `spk.js` (trajectory segments:
+  container SPK/PCK/CK are all built on), `spk.js` (trajectory segments:
   chaining target→observer through the SSB, aberration correction),
-  `pck.js` (binary body-orientation segments).
+  `pck.js` (binary body-orientation segments), `ck.js`
+  (spacecraft/instrument-orientation segments -- multi-file priority
+  search with tolerance fallthrough, and frame composition via
+  `frames.js`'s `frameRotationMatrix()`).
 - **Segment math** (decoding a raw DAF segment into a state/orientation
   at a given time) -- `math/chebyshev.js` (Types 2/3), `math/chebyshevRecord.js`
   (the fixed-size-record layout Types 2/3 and PCK Type 2 share),
   `math/interpolatedRecord.js` (Types 5/8/9/12/13/21's shared layout),
   `math/lagrangeHermite.js` (Types 8/9/12/13's interpolation),
   `math/differenceArray.js` (Type 21's modified-divided-difference
-  evaluator), `math/vector3.js` (small vector helpers `spk.js` uses).
+  evaluator), `math/vector3.js` (small vector helpers `spk.js` uses),
+  `math/quaternion.js` (quaternion↔matrix and axis-angle↔matrix
+  conversions CK Types 2/3 need).
 - **Two-body propagation** -- `prop2b.js` (NAIF's universal-variables
   propagator, elliptical/parabolic/hyperbolic uniformly), `math/stumpff.js`
   (the Stumpff functions it needs).
 - **Time system** -- `str2et.js` (time-string → ET), `et2utc.js` (the
   round-trip inverse), `time/parseTimeString.js` (the actual string
   grammar), `time/calendar.js` (calendar ↔ continuous-seconds-past-J2000),
-  `time/deltet.js` (ET ↔ UTC/TDT via a loaded leapseconds kernel).
+  `time/deltet.js` (ET ↔ UTC/TDT via a loaded leapseconds kernel),
+  `sclk.js` (spacecraft clock: clock-string ↔ ticks, ticks ↔ ET, via a
+  loaded `KPL/SCLK` text kernel -- what `ck.js`'s pointing lookups are
+  indexed by).
 - **Bodies & frames** -- `bodies.js` (name ↔ NAIF ID), `bodyConstants.js`
   (`BODY<id>_GM`/`_RADII`/... from a loaded text PCK), `bodyOrientation.js`
   (the classic text-PCK pole/prime-meridian formula), `frames.js`

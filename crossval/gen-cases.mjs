@@ -405,12 +405,87 @@ const str2etCases = [
   '2026-08-11T12:00:00 UTC',
 ];
 
+// sclkCases/ckCases: driven against SC=-900/INST=-900000, the real,
+// CSPICE-authored fixture crossval/gen-ck-fixture.py builds (sclk.tsc
+// + ck.bc) -- see that script's own doc comment for why it, not this
+// file, owns building that particular fixture. A single partition
+// ([0, 2559999999], moduli [10000000, 256]) means no partition-offset
+// arithmetic is exercised here -- that's already covered by
+// test/sclk.test.js's own dedicated multi-partition synthetic kernel;
+// this is purely about spiceJS's *string encoding* and *tick<->et*
+// math agreeing with real CSPICE on a real file.
+const SC = -900;
+const INST = -900000;
+
+const scEncodeCases = [
+  '1/0000500:07',
+  '0000500:07', // default (omitted) partition
+  '2000000:00',
+  '0500000:07', // matches the ckCases type1 request below, for a shared sanity point
+];
+const scDecodeCases = [0, 500, 1281807, 10050006, 20000000, 2559999999];
+const sclkToEtCases = [0, 500, 12345, 1281807, 999999999, 2559999999];
+const etToSclkCases = [0, 1.953125, 5005.66015625, 9999996.09375];
+
+const ckCases = [];
+// Type 1: dense discrete instances, no AV.
+for (const sclkdp of [0, 5000, 10000, 745000, 1490000]) {
+  ckCases.push({ inst: INST, sclkdp, tol: 1000000, ref: 'J2000', needAv: false });
+}
+ckCases.push({ inst: INST, sclkdp: 5000, tol: 1000000, ref: 'J2000', needAv: true });
+// Type 2: fixed angular rate, mid-interval and at a boundary.
+ckCases.push({ inst: INST, sclkdp: 2005000, tol: 1, ref: 'J2000', needAv: true });
+ckCases.push({ inst: INST, sclkdp: 2000000, tol: 1, ref: 'J2000', needAv: false }); // interval start, exact
+// Type 3: direct interpolation (both landing exactly on a recorded
+// instance -- frac=0/1, no interpolation math involved -- and squarely
+// between two, frac=0.5, which actually exercises axisar_/raxisa_'s
+// own convention -- see crossval/README.md's own notes on the real bug
+// this specific kind of case caught, that every frac=0/1 case here
+// missed by accident), the gap's closer-endpoint fallback (both from
+// the left and the right side), and squarely inside the gap past
+// tolerance (not found on either side).
+ckCases.push({ inst: INST, sclkdp: 5000500, tol: 100, ref: 'J2000', needAv: false });
+ckCases.push({ inst: INST, sclkdp: 5000505, tol: 100, ref: 'J2000', needAv: true }); // frac=0.5 between records 50 and 51
+ckCases.push({ inst: INST, sclkdp: 5001300, tol: 400, ref: 'J2000', needAv: false }); // closer to 5,000,990
+ckCases.push({ inst: INST, sclkdp: 5001700, tol: 400, ref: 'J2000', needAv: false }); // closer to 5,002,000
+ckCases.push({ inst: INST, sclkdp: 5001495, tol: 100, ref: 'J2000', needAv: false }); // not found -- squarely in the gap
+// Frame composition: same frame (no-op), another fixed inertial frame
+// (no SCLK needed), and a real rotating body-fixed frame (needs the
+// full ckgpav omega-term math -- see ck.js's own doc comment).
+ckCases.push({ inst: INST, sclkdp: 5000500, tol: 100, ref: 'J2000', needAv: true });
+ckCases.push({ inst: INST, sclkdp: 5000500, tol: 100, ref: 'ECLIPJ2000', needAv: true });
+ckCases.push({ inst: INST, sclkdp: 5000500, tol: 100, ref: 'IAU_EARTH', needAv: true });
+ckCases.push({ inst: INST, sclkdp: 5000505, tol: 100, ref: 'IAU_EARTH', needAv: true }); // frac=0.5 *and* a rotating frame at once
+ckCases.push({ inst: INST, sclkdp: 745000, tol: 1000000, ref: 'IAU_MARS', needAv: true }); // type 1, rotating frame
+ckCases.push({ inst: INST, sclkdp: 2005000, tol: 1, ref: 'IAU_EARTH', needAv: true }); // type 2, rotating frame
+// Not found at all (past every segment's own coverage and tolerance).
+ckCases.push({ inst: INST, sclkdp: -1000000, tol: 10, ref: 'J2000', needAv: false });
+
 fs.writeFileSync(
   path.join(fixturesDir, 'cases.json'),
-  JSON.stringify({ str2etCases, spkezCases, spkezrCases, spkStateCases, bodyValueCases, prop2bCases }, null, 2)
+  JSON.stringify(
+    {
+      str2etCases,
+      spkezCases,
+      spkezrCases,
+      spkStateCases,
+      bodyValueCases,
+      prop2bCases,
+      sc: SC,
+      inst: INST,
+      scEncodeCases,
+      scDecodeCases,
+      sclkToEtCases,
+      etToSclkCases,
+      ckCases,
+    },
+    null,
+    2
+  )
 );
 
 console.log(`Wrote kernel.bsp (${segments.length} segments) and cases.json ` +
   `(${str2etCases.length} str2et cases, ${spkezCases.length} spkez cases, ${spkezrCases.length} spkezr cases, ` +
   `${spkStateCases.length} spkState cases, ${bodyValueCases.length} bodyValues cases, ` +
-  `${prop2bCases.length} prop2b cases).`);
+  `${prop2bCases.length} prop2b cases, ${scEncodeCases.length + scDecodeCases.length + sclkToEtCases.length + etToSclkCases.length} sclk cases, ` +
+  `${ckCases.length} ck cases).`);

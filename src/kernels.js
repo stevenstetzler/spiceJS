@@ -1,10 +1,10 @@
 /**
  * Kernel loading: SPICE's FURNSH / UNLOAD / KCLEAR, for text kernels
  * (LSK, FK, IK, SCLK), meta-kernels (MK), binary SPK (trajectory)
- * kernels, and binary PCK (body orientation) kernels. Other binary
- * kernels (CK) and DAS-based kernels (DSK) are detected and rejected
- * with a clear "not supported yet" error rather than silently
- * misbehaving.
+ * kernels, binary PCK (body orientation) kernels, and binary CK
+ * (spacecraft/instrument orientation) kernels. DAS-based kernels (DSK)
+ * are detected and rejected with a clear "not supported yet" error
+ * rather than silently misbehaving.
  *
  * This is the Node-specific half of kernel loading: `furnsh()` reads
  * a local file synchronously via `fs.readFileSync` and resolves

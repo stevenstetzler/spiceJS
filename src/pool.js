@@ -3,11 +3,12 @@
  * text kernels (LSK, PCK, FK, IK, SCLK, ...), mirroring the "kernel
  * pool" concept in NAIF's SPICE toolkit (see the POOL required
  * reading, and routines like PDPOOL/PCPOOL/GDPOOL/GCPOOL) -- plus an
- * index of segments loaded from binary SPK (trajectory) kernels. Text
- * variables and SPK segments are unrelated data, but both are "what
- * furnsh() has loaded so far", so this class holds both rather than
- * threading a second piece of state through furnsh()/unload()/every
- * query function.
+ * index of segments loaded from binary SPK (trajectory), PCK (body
+ * orientation), and CK (spacecraft/instrument orientation) kernels.
+ * Text variables and binary-kernel segments are unrelated data, but
+ * both are "what furnsh() has loaded so far", so this class holds all
+ * of it rather than threading several more pieces of state through
+ * furnsh()/unload()/every query function.
  */
 export class KernelPool {
   constructor() {
@@ -17,6 +18,8 @@ export class KernelPool {
     this._spkSegmentsByTarget = new Map();
     /** @type {Map<number, Array<object>>} frame ID -> PCK segments */
     this._pckSegmentsByFrame = new Map();
+    /** @type {Map<number, Array<object>>} instrument/spacecraft ID -> CK segments */
+    this._ckSegmentsByInst = new Map();
   }
 
   /**
@@ -126,11 +129,45 @@ export class KernelPool {
     return Array.from(this._pckSegmentsByFrame.values()).flat();
   }
 
-  /** Remove every variable, SPK segment, and PCK segment from the pool (as in SPICE's kclear_c). */
+  /** Index CK segments (see ck.js's loadCk()) by their instrument/spacecraft ID. */
+  addCkSegments(segments) {
+    for (const segment of segments) {
+      const list = this._ckSegmentsByInst.get(segment.inst);
+      if (list) {
+        list.push(segment);
+      } else {
+        this._ckSegmentsByInst.set(segment.inst, [segment]);
+      }
+    }
+  }
+
+  /** Undo addCkSegments() for exactly these segment objects (used by unload()). */
+  removeCkSegments(segments) {
+    for (const segment of segments) {
+      const list = this._ckSegmentsByInst.get(segment.inst);
+      if (!list) continue;
+      const idx = list.indexOf(segment);
+      if (idx !== -1) list.splice(idx, 1);
+      if (list.length === 0) this._ckSegmentsByInst.delete(segment.inst);
+    }
+  }
+
+  /** Loaded CK segments with the given instrument/spacecraft ID, in load order (empty array if none). */
+  getCkSegments(inst) {
+    return this._ckSegmentsByInst.get(inst) || [];
+  }
+
+  /** Every loaded CK segment, across all instruments. */
+  allCkSegments() {
+    return Array.from(this._ckSegmentsByInst.values()).flat();
+  }
+
+  /** Remove every variable, SPK segment, PCK segment, and CK segment from the pool (as in SPICE's kclear_c). */
   clear() {
     this._vars.clear();
     this._spkSegmentsByTarget.clear();
     this._pckSegmentsByFrame.clear();
+    this._ckSegmentsByInst.clear();
   }
 }
 

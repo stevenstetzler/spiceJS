@@ -147,6 +147,102 @@ compareStateResults('spkState', js.spkStateResults || [], py.spkStateResults || 
 compareBodyValueResults('bodyValues', js.bodyValueResults || [], py.bodyValueResults || []);
 compareStateResults('prop2b', js.prop2bResults || [], py.prop2bResults || []);
 
+function compareNumericResults(label, jsResults, pyResults, field, absTol = 1e-6, relTol = 1e-9) {
+  for (let i = 0; i < jsResults.length; i++) {
+    const a = jsResults[i];
+    const b = pyResults[i];
+    if (a.error || b.error) {
+      if (Boolean(a.error) !== Boolean(b.error)) {
+        report(label, a.input, `spiceJS ${a.error ? `errored: ${a.error}` : `got ${a[field]}`}, ` +
+          `spiceypy ${b.error ? `errored: ${b.error}` : `got ${b[field]}`}`);
+      } else {
+        passed++;
+      }
+      continue;
+    }
+    if (!closeEnough(a[field], b[field], absTol, relTol)) {
+      report(label, a.input, `spiceJS ${a[field]} vs spiceypy ${b[field]} (diff ${Math.abs(a[field] - b[field])})`);
+    } else {
+      passed++;
+    }
+  }
+}
+
+function compareScDecodeResults(jsResults, pyResults) {
+  for (let i = 0; i < jsResults.length; i++) {
+    const a = jsResults[i];
+    const b = pyResults[i];
+    if (a.error || b.error) {
+      if (Boolean(a.error) !== Boolean(b.error)) {
+        report('scDecode', a.input, `spiceJS ${a.error ? `errored: ${a.error}` : `got "${a.clockString}"`}, ` +
+          `spiceypy ${b.error ? `errored: ${b.error}` : `got "${b.clockString}"`}`);
+      } else {
+        passed++;
+      }
+      continue;
+    }
+    if (a.clockString !== b.clockString) {
+      report('scDecode', a.input, `spiceJS "${a.clockString}" vs spiceypy "${b.clockString}"`);
+    } else {
+      passed++;
+    }
+  }
+}
+
+compareNumericResults('scEncode', js.scEncodeResults || [], py.scEncodeResults || [], 'ticks', 1e-6, 1e-12);
+compareScDecodeResults(js.scDecodeResults || [], py.scDecodeResults || []);
+compareNumericResults('sclkToEt', js.sclkToEtResults || [], py.sclkToEtResults || [], 'et');
+compareNumericResults('etToSclk', js.etToSclkResults || [], py.etToSclkResults || [], 'ticks', 1e-6, 1e-9);
+
+function compareCkResults(jsResults, pyResults) {
+  for (let i = 0; i < jsResults.length; i++) {
+    const a = jsResults[i];
+    const b = pyResults[i];
+    // spiceJS reports a miss as `found: false`; spiceypy's ckgp/ckgpav
+    // raise instead (see run-py.py's own comment) -- both mean "no
+    // pointing satisfies this request," so they're equivalent outcomes
+    // here, not a mismatch.
+    const aMissing = a.found === false || Boolean(a.error);
+    const bMissing = Boolean(b.error);
+    if (aMissing || bMissing) {
+      if (aMissing !== bMissing) {
+        report('ck', a.input, `spiceJS ${aMissing ? 'found nothing' : 'found a result'}, ` +
+          `spiceypy ${bMissing ? `errored: ${b.error}` : 'found a result'}`);
+      } else {
+        passed++;
+      }
+      continue;
+    }
+    const mismatches = [];
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++) {
+        if (!closeEnough(a.cmat[r][c], b.cmat[r][c], 1e-9, 1e-9)) {
+          mismatches.push(`cmat[${r}][${c}]: spiceJS ${a.cmat[r][c]} vs spiceypy ${b.cmat[r][c]}`);
+        }
+      }
+    }
+    if (a.av && b.av) {
+      for (let k = 0; k < 3; k++) {
+        if (!closeEnough(a.av[k], b.av[k], 1e-9, 1e-9)) {
+          mismatches.push(`av[${k}]: spiceJS ${a.av[k]} vs spiceypy ${b.av[k]}`);
+        }
+      }
+    } else if (Boolean(a.av) !== Boolean(b.av)) {
+      mismatches.push(`av presence: spiceJS ${a.av ? 'present' : 'absent'}, spiceypy ${b.av ? 'present' : 'absent'}`);
+    }
+    if (!closeEnough(a.clkout, b.clkout, 1e-6, 1e-9)) {
+      mismatches.push(`clkout: spiceJS ${a.clkout} vs spiceypy ${b.clkout}`);
+    }
+    if (mismatches.length) {
+      report('ck', a.input, mismatches.join('; '));
+    } else {
+      passed++;
+    }
+  }
+}
+
+compareCkResults(js.ckResults || [], py.ckResults || []);
+
 console.log(`\n${passed} passed, ${failures} failed (of ${passed + failures} cases).`);
 if (failures > 0) {
   process.exit(1);

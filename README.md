@@ -50,6 +50,18 @@ rather than relying on documentation and hand derivation alone — see
 - **Binary PCK** reading (`pckSegments()`) for higher-accuracy,
   time-varying body orientation, preferred over the classic
   RA/DEC/W formula when both are available.
+- **Binary CK** (spacecraft/instrument orientation) reading —
+  `ckgp()`/`ckgpav()`, mirroring `spkez()`'s own search-and-compose
+  shape: multi-file, priority-ordered segment search with tolerance-
+  based fallthrough, and rotation into any supported reference frame
+  (not just the segment's own). Segment types **1** (discrete), **2**
+  (fixed angular rate), and **3** (linear interpolation) are supported
+  — type 3 covers most real mission pointing products.
+- **Spacecraft clock (SCLK) time strings** — `scEncode()`/`scDecode()`
+  convert between a clock string (`"1/1465644281.171"`) and ticks;
+  `sclkToEt()`/`etToSclk()` convert ticks to/from ephemeris time.
+  SCLK data type 1 (the only type NAIF has ever shipped real kernels
+  for), time system 1 (TDB).
 - **Body constants** (`bodyValues()`) — any `BODY<id>_<ITEM>` from a
   loaded text PCK (radii, GM, ...).
 - **`prop2b()`** — NAIF's universal-variables two-body propagator,
@@ -65,9 +77,9 @@ rather than relying on documentation and hand derivation alone — see
   query actually touches. A real 1-year query against a 32.7 MB
   ephemeris fetches under 1% of the file.
 
-Not yet supported (CK/DSK kernels, dynamic/switch frames, SCLK, and a
-few other gaps — each fails with a clear error, never a silently wrong
-answer) — see [`TODO.md`](TODO.md).
+Not yet supported (DSK kernels, dynamic/switch frames, CK data types
+4-6, and a few other gaps — each fails with a clear error, never a
+silently wrong answer) — see [`TODO.md`](TODO.md).
 
 ## Install
 

@@ -63,13 +63,17 @@ test('furnsh rejects a file that does not look like a text kernel', () => {
 });
 
 test('furnsh rejects a binary kernel type it does not support yet, with a helpful message', () => {
+  // DAF/CK is a real, now-supported kernel type (see ck.js) -- exercise
+  // the fallback with a hypothetical DAF-shaped word that isn't SPK,
+  // PCK, or CK (a real DSK kernel isn't DAF-based at all, so it can't
+  // stand in for this case).
   const pool = new KernelPool();
-  const fakeCk = path.join(os.tmpdir(), `spicejs-test-fake-${process.pid}.bc`);
-  fs.writeFileSync(fakeCk, 'DAF/CK                                                                          ');
+  const fakeDsk = path.join(os.tmpdir(), `spicejs-test-fake-${process.pid}.bc`);
+  fs.writeFileSync(fakeDsk, 'DAF/XYZ                                                                         ');
   try {
-    assert.throws(() => furnsh(fakeCk, pool), /Only binary SPK and PCK kernels are supported/);
+    assert.throws(() => furnsh(fakeDsk, pool), /Only binary SPK, PCK, and CK kernels are supported/);
   } finally {
-    fs.unlinkSync(fakeCk);
+    fs.unlinkSync(fakeDsk);
   }
 });
 

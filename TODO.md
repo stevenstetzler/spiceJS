@@ -6,10 +6,21 @@ answer — unless noted otherwise.
 
 ## Core library
 
-- **CK (spacecraft/instrument orientation) kernels.** Shares SPK/PCK's
-  DAF container (`src/daf.js`), so it's the most natural next binary
-  kernel type to add — no new container-format work needed, just a
-  new segment reader.
+- **CK data types 4, 5, and 6.** Types 1, 2, and 3 (`src/ck.js`) cover
+  essentially every real mission CK product — type 3 (linear
+  interpolation) is by far the most common, with 1 (discrete) and 2
+  (fixed angular rate) real but less so. Type 4 (Chebyshev polynomials,
+  ESOC-style products), 5 (unequal-interval Hermite/Lagrange, the CK
+  counterpart of SPK's own 9/13), and 6 (ESOC/quaternion Hermite) are
+  real but rarer, following the same phased-rollout precedent SPK's
+  own 8/9/12/13/21 types did after 2/3/5 shipped first.
+- **SCLK data type 2**, and time system 2 (TDT) within type 1
+  (`src/sclk.js`) — type 1 is the only SCLK data type NAIF has ever
+  actually shipped real kernels for, and within it, time system 1
+  (TDB) is by far the common real case; a kernel claiming either is a
+  clear error rather than silently mishandled. TDT support specifically
+  needs a TDT&lt;-&gt;TDB conversion this library doesn't have yet (the
+  existing `UTC<->TDB` path is leapseconds-based and unrelated).
 - **DSK (digital shape) kernels.** A different container format
   entirely (DAS, not DAF) — real new groundwork, not an extension of
   the existing DAF reader.
@@ -22,9 +33,8 @@ answer — unless noted otherwise.
   frame** (`BODY#_CONSTANTS_JED_EPOCH`/`BODY#_CONSTANTS_REF_FRAME`).
   Rare in practice; a loaded kernel that sets either is a clear error
   rather than being silently ignored.
-- **Spacecraft clock (SCLK) time strings**, and general time zones
-  beyond the handful `str2et_c` itself documents (the U.S. zones, and
-  `UTC±H:MM`).
+- **General time zones** beyond the handful `str2et_c` itself
+  documents (the U.S. zones, and `UTC±H:MM`).
 - **Lazy-loading Phase 4**: SPK/PCK segment types 5/9/13/21 with a
   large epoch/record count (`N`) use an on-disk directory (one entry
   per 100) in the real format specifically so a reader can

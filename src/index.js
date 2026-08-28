@@ -9,6 +9,8 @@ export { str2et } from './str2et.js';
 export { et2utc, et2utcCalendar } from './et2utc.js';
 export { spkState, spkSegments, spkez, spkezr } from './spk.js';
 export { pckSegments } from './pck.js';
+export { ckSegments, ckgp, ckgpav } from './ck.js';
+export { scEncode, scDecode, sclkToEt, etToSclk, etToSclkDiscrete, scTicksForFields, scPartitions } from './sclk.js';
 export { bodyCode, bodyName } from './bodies.js';
 export { bodyValues } from './bodyConstants.js';
 export { prop2b } from './prop2b.js';

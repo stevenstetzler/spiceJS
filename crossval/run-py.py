@@ -16,9 +16,13 @@ spice.furnsh(os.path.join(HERE, "pck00011.tpc"))
 spice.furnsh(os.path.join(HERE, "gm_de440.tpc"))
 spice.furnsh(os.path.join(HERE, "dss17.bsp"))
 spice.furnsh(os.path.join(FIXTURES, "kernel.bsp"))
+spice.furnsh(os.path.join(FIXTURES, "sclk.tsc"))
+spice.furnsh(os.path.join(FIXTURES, "ck.bc"))
 
 with open(os.path.join(FIXTURES, "cases.json")) as f:
     cases = json.load(f)
+
+sc = cases.get("sc")
 
 str2et_results = []
 for time_string in cases["str2etCases"]:
@@ -79,6 +83,59 @@ for c in cases.get("prop2bCases", []):
     except Exception as err:  # noqa: BLE001
         prop2b_results.append({"input": c, "error": str(err)})
 
+sc_encode_results = []
+for clock_string in cases.get("scEncodeCases", []):
+    try:
+        sc_encode_results.append({"input": clock_string, "ticks": float(spice.scencd(sc, clock_string))})
+    except Exception as err:  # noqa: BLE001
+        sc_encode_results.append({"input": clock_string, "error": str(err)})
+
+sc_decode_results = []
+for ticks in cases.get("scDecodeCases", []):
+    try:
+        sc_decode_results.append({"input": ticks, "clockString": spice.scdecd(sc, ticks, 40)})
+    except Exception as err:  # noqa: BLE001
+        sc_decode_results.append({"input": ticks, "error": str(err)})
+
+sclk_to_et_results = []
+for ticks in cases.get("sclkToEtCases", []):
+    try:
+        sclk_to_et_results.append({"input": ticks, "et": float(spice.sct2e(sc, ticks))})
+    except Exception as err:  # noqa: BLE001
+        sclk_to_et_results.append({"input": ticks, "error": str(err)})
+
+et_to_sclk_results = []
+for et in cases.get("etToSclkCases", []):
+    try:
+        et_to_sclk_results.append({"input": et, "ticks": float(spice.sce2c(sc, et))})
+    except Exception as err:  # noqa: BLE001
+        et_to_sclk_results.append({"input": et, "error": str(err)})
+
+# spiceypy's ckgp/ckgpav raise (rather than returning a `found` flag)
+# when no pointing satisfies the request -- caught the same way any
+# other genuine error is, since compare.mjs's own ckCases comparator
+# treats "spiceJS found:false" as equivalent to "spiceypy raised",
+# same convention every other case list already uses for "both sides
+# agree nothing was found."
+ck_results = []
+for c in cases.get("ckCases", []):
+    try:
+        if c["needAv"]:
+            cmat, av, clkout = spice.ckgpav(c["inst"], c["sclkdp"], c["tol"], c["ref"])
+            av = [float(x) for x in av]
+        else:
+            cmat, clkout = spice.ckgp(c["inst"], c["sclkdp"], c["tol"], c["ref"])
+            av = None
+        ck_results.append({
+            "input": c,
+            "found": True,
+            "cmat": [[float(x) for x in row] for row in cmat],
+            "av": av,
+            "clkout": float(clkout),
+        })
+    except Exception as err:  # noqa: BLE001
+        ck_results.append({"input": c, "error": str(err)})
+
 with open(os.path.join(FIXTURES, "results-py.json"), "w") as f:
     json.dump(
         {
@@ -88,6 +145,11 @@ with open(os.path.join(FIXTURES, "results-py.json"), "w") as f:
             "spkStateResults": spk_state_results,
             "bodyValueResults": body_value_results,
             "prop2bResults": prop2b_results,
+            "scEncodeResults": sc_encode_results,
+            "scDecodeResults": sc_decode_results,
+            "sclkToEtResults": sclk_to_et_results,
+            "etToSclkResults": et_to_sclk_results,
+            "ckResults": ck_results,
         },
         f,
         indent=2,
@@ -96,6 +158,8 @@ with open(os.path.join(FIXTURES, "results-py.json"), "w") as f:
 print(
     f"spiceypy: {len(str2et_results)} str2et cases, {len(spkez_results)} spkez cases, "
     f"{len(spkezr_results)} spkezr cases, {len(spk_state_results)} spkState cases, "
-    f"{len(body_value_results)} bodyValues cases, {len(prop2b_results)} prop2b cases "
+    f"{len(body_value_results)} bodyValues cases, {len(prop2b_results)} prop2b cases, "
+    f"{len(sc_encode_results) + len(sc_decode_results) + len(sclk_to_et_results) + len(et_to_sclk_results)} sclk cases, "
+    f"{len(ck_results)} ck cases "
     f"-> results-py.json (CSPICE {spice.tkvrsn('TOOLKIT')})"
 )
