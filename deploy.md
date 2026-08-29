@@ -127,6 +127,27 @@ things worth deciding up front:
   interface on whatever port you give it (`server.listen(opts.port,
   ...)`, no host argument), so it's already reverse-proxy-friendly; it
   just doesn't do TLS itself.
+- **Deployable under a subpath** (e.g. `https://example.com/spiceJS/`),
+  not just at a domain's own root. Every page/module resolves its own
+  assets and API calls with paths *relative* to itself (either hand-
+  counted `../` in a page's own inline script, or an `import.meta.url`-
+  anchored `SITE_ROOT` in a module shared across pages at different
+  depths, e.g. `examples/shared/horizonsClient.js`/`kernelSession.js`)
+  rather than root-absolute ones -- so mounting this behind a proxy that
+  **strips the subpath prefix** before forwarding (the server itself
+  needs no prefix awareness at all; its own routing keeps matching
+  exactly the paths it always has) just works:
+  ```nginx
+  location /spiceJS/ {
+      proxy_pass http://127.0.0.1:8080/;   # trailing slash strips the /spiceJS/ prefix
+      proxy_set_header Host $host;
+  }
+  ```
+  The two server-emitted redirects (a directory request missing its
+  trailing slash) use a *relative* `Location` header for the same
+  reason -- resolved by the browser against the original request URI,
+  so it comes back through the stripping proxy correctly without the
+  server needing to know the prefix exists.
 - **Give it persistent disk for `kernels/cache/`** if you want the
   caching to actually pay off across restarts -- it isn't required
   (an empty `kernels/cache/` just re-fetches from NAIF/JPL on demand,
