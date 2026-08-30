@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import * as browserEntry from '../src/browser.js';
+import * as indexEntry from '../src/index.js';
 import { KernelPool } from '../src/pool.js';
 import { spkSegments } from '../src/spk.js';
 import { writeSpk } from './helpers/writeSpk.js';
@@ -18,26 +19,17 @@ test('src/browser.js does not export furnsh -- it is not Node-only-safe to expos
   assert.equal('furnsh' in browserEntry, false);
 });
 
-test('src/browser.js exports load/unload/kclear/cache alongside the environment-agnostic query API', () => {
-  for (const name of [
-    'load',
-    'unload',
-    'kclear',
-    'createMemoryCache',
-    'createIndexedDbCache',
-    'KernelPool',
-    'globalPool',
-    'str2et',
-    'spkState',
-    'spkSegments',
-    'spkez',
-    'spkezr',
-    'pckSegments',
-    'bodyCode',
-    'bodyValues',
-    'prop2b',
-    'frameId',
-  ]) {
+// Checked against src/index.js's own actual export list, not a
+// hand-maintained copy of it -- a hardcoded list here silently drifts
+// out of sync every time a new function is exported (this one already
+// had, missing everything CK/SCLK/TAI added since it was last touched)
+// without ever failing, which defeats the point of the check.
+test('src/browser.js exports exactly what src/index.js does, minus furnsh', () => {
+  const indexKeys = Object.keys(indexEntry).sort();
+  const browserKeys = Object.keys(browserEntry).sort();
+  const expectedBrowserKeys = indexKeys.filter((name) => name !== 'furnsh').sort();
+  assert.deepEqual(browserKeys, expectedBrowserKeys);
+  for (const name of browserKeys) {
     assert.equal(typeof browserEntry[name], name.startsWith('global') ? 'object' : 'function', `expected ${name}`);
   }
 });

@@ -11,9 +11,11 @@
  *                                  lands on `window.spicejs`
  *
  * Not committed to git (see .gitignore) -- built fresh by `npm run
- * build` (locally, for a quick check) or `.github/workflows/release.yml`
- * (on a version-tag push, which is what actually ships these as
- * GitHub Release assets -- see that workflow for the real pipeline).
+ * build` (locally, for a quick check), test/dist.test.js (as part of
+ * `npm test` -- a smoke test of the real built output, not just
+ * src/browser.js directly), or `.github/workflows/release.yml` (on a
+ * version-tag push, which is what actually ships these as GitHub
+ * Release assets -- see that workflow for the real pipeline).
  *
  * Usage: node scripts/build.mjs
  */
