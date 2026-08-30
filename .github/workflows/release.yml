@@ -5,6 +5,23 @@ name: Release
 # the browser-ready bundles automatically. See scripts/build.mjs for
 # what actually gets built and docs/browser-support.md for the design
 # behind src/browser.js, the entry point being bundled.
+#
+# Deliberately narrow, on purpose:
+# - A pull_request (open/sync/whatever) can never fire this at all --
+#   `pull_request` isn't in the trigger list below, only `push`, so PR
+#   activity has no path to this workflow regardless of what's in the
+#   PR's diff.
+# - A fork's own tag push can't reach this workflow either: a push to
+#   a fork is an event on the *fork's* repository, which only runs the
+#   fork's own copy of this file, under the fork's own Actions/tokens
+#   -- it structurally cannot execute here or touch this repo's
+#   Releases. The `if:` on the job below is a second, explicit belt on
+#   top of that, not a substitute for it.
+# - What GitHub's own trigger *doesn't* restrict: which branch a tag
+#   points to -- a tag can be cut from any commit on any branch, not
+#   just main. That's enforced by hand, in the first real step below,
+#   since there's no trigger-level way to say "only if this tag is on
+#   main."
 on:
   push:
     tags:
@@ -15,9 +32,26 @@ permissions:
 
 jobs:
   build-and-release:
+    # Redundant with push's own scoping (see the trigger comment above
+    # -- a fork's tag push can never reach this workflow to begin
+    # with), but explicit here so a release can't happen from anywhere
+    # but this repo even if that ever stops being true.
+    if: github.repository == 'stevenstetzler/spiceJS'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history for every branch/tag (not just the tagged
+          # commit) -- the next step needs `origin/main` to check
+          # ancestry against.
+          fetch-depth: 0
+
+      - name: Refuse to release a tag that isn't on main
+        run: |
+          if ! git merge-base --is-ancestor "${{ github.sha }}" origin/main; then
+            echo "::error::${{ github.ref_name }} (commit ${{ github.sha }}) is not reachable from main -- refusing to release from a tag cut on another branch."
+            exit 1
+          fi
 
       - uses: actions/setup-node@v4
         with:
