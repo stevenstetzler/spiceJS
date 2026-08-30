@@ -5,6 +5,7 @@ export { createMemoryCache, createIndexedDbCache } from './cache.js';
 export { openRemoteSpk } from './lazy/openRemoteSpk.js';
 export { openRemotePck } from './lazy/openRemotePck.js';
 export { openRemoteFile } from './lazy/remoteFile.js';
+export { prefetchSpkQuery, prefetchSpkBodySegment, discoverSpkBodies } from './lazy/prefetch.js';
 export { str2et } from './str2et.js';
 export { et2utc, et2utcCalendar } from './et2utc.js';
 export { et2tai, et2taiCalendar } from './et2tai.js';

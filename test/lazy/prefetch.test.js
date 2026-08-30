@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { writeSpk } from '../helpers/writeSpk.js';
 import { loadSpk, spkez, spkState, spkSegments } from '../../src/spk.js';
 import { KernelPool } from '../../src/pool.js';
-import { prefetchSpkQuery, prefetchSpkBodySegment } from '../../src/lazy/prefetch.js';
+import { prefetchSpkQuery, prefetchSpkBodySegment, discoverSpkBodies } from '../../src/lazy/prefetch.js';
 import { fakeRemoteFile } from './helpers/fakeRemote.js';
 import { multiRecordLinearSegment } from './helpers/multiRecordSegment.js';
 import { equalStepLinearSegment } from './helpers/equalStepSegment.js';
@@ -60,6 +60,45 @@ test('prefetchSpkQuery + ordinary spkez(): matches the analytic two-hop chain an
     Object.values(embRelSsb.expectedStateAt(et)).flat()
   );
   [...position, ...velocity].forEach((v, i) => closeTo(v, expected[i], 1e-6));
+});
+
+test('discoverSpkBodies: reports every body, its declared center, unioned coverage, and segment types -- fetching only the summary-record chain', async () => {
+  const { buf, earthRelEmb, embRelSsb } = earthEmbSsbFixture();
+  const { remoteFile, requests } = fakeRemoteFile(buf, { blockBytes: 128 });
+
+  const bodies = await discoverSpkBodies(remoteFile);
+
+  assert.deepEqual([...bodies.keys()].sort((a, b) => a - b), [3, 399]);
+  const earth = bodies.get(399);
+  assert.equal(earth.center, 3);
+  assert.equal(earth.etStart, earthRelEmb.startEt);
+  assert.equal(earth.etEnd, earthRelEmb.stopEt);
+  assert.deepEqual([...earth.types], [earthRelEmb.type]);
+  const emb = bodies.get(3);
+  assert.equal(emb.center, 0);
+  assert.equal(emb.etStart, embRelSsb.startEt);
+  assert.equal(emb.etEnd, embRelSsb.stopEt);
+
+  // Structural only -- no segment data words fetched, just the file
+  // record plus however many summary records the chain actually has
+  // (one, for this small fixture), same as prefetchQuery()'s own
+  // ensureSummaryRecords() step alone would touch.
+  assert.ok(requests.length <= 2, `expected only file-record + summary-record reads, got ${requests.length} requests`);
+});
+
+test('discoverSpkBodies: unions coverage and collects every type across multiple segments for the same body', async () => {
+  const first = multiRecordLinearSegment({ target: 5, center: 0, p0: [0, 0, 0], v0: [1, 0, 0], n: 5, intlen: 10, init: 0 });
+  const second = multiRecordLinearSegment({ target: 5, center: 0, p0: [0, 0, 0], v0: [1, 0, 0], n: 5, intlen: 10, init: 100 });
+  const buf = writeSpk({ segments: [first, second] });
+  const { remoteFile } = fakeRemoteFile(buf, { blockBytes: 128 });
+
+  const bodies = await discoverSpkBodies(remoteFile);
+
+  assert.deepEqual([...bodies.keys()], [5]);
+  const body = bodies.get(5);
+  assert.equal(body.etStart, Math.min(first.startEt, second.startEt));
+  assert.equal(body.etEnd, Math.max(first.stopEt, second.stopEt));
+  assert.deepEqual([...body.types].sort(), [...new Set([first.type, second.type])].sort());
 });
 
 test('is bit-identical to the eager (furnsh-equivalent) path on the same bytes', async () => {
