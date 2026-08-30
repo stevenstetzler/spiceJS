@@ -27,7 +27,10 @@ rather than relying on documentation and hand derivation alone — see
 - **`str2et()`**/**`et2utc()`**, following NAIF's own documented
   `str2et_c` grammar (ISO, calendar, day-of-year, Julian date, and
   more — see `src/time/parseTimeString.js`'s doc comment for the full
-  rule-by-rule grammar and worked examples).
+  rule-by-rule grammar and worked examples). **`taiToEt()`/`etToTai()`**
+  and **`et2tai()`/`et2taiCalendar()`** do the same for TAI (matching
+  `unitim_c(..., 'TAI', ...)`) — TAI needs no leap-second table at all,
+  just the fixed 32.184s TT-TAI offset.
 - **Binary SPK** (trajectory) reading — direct segment lookup
   (`spkState()`) and chained, aberration-corrected queries across
   arbitrary target/observer pairs by NAIF ID (`spkez()`) or body

@@ -51,6 +51,22 @@ for (let i = 0; i < js.str2etResults.length; i++) {
   }
 }
 
+for (let i = 0; i < (js.taiResults || []).length; i++) {
+  const a = js.taiResults[i];
+  const b = py.taiResults[i];
+  if (!closeEnough(a.tai, b.tai, 1e-6, 1e-12)) {
+    report('etToTai', a.input, `spiceJS ${a.tai} vs spiceypy ${b.tai} (diff ${Math.abs(a.tai - b.tai)})`);
+  } else {
+    passed++;
+  }
+  if (!closeEnough(a.roundTripEt, b.roundTripEt, 1e-6, 1e-12)) {
+    report('taiToEt (round trip)', a.input, `spiceJS ${a.roundTripEt} vs spiceypy ${b.roundTripEt} ` +
+      `(diff ${Math.abs(a.roundTripEt - b.roundTripEt)})`);
+  } else {
+    passed++;
+  }
+}
+
 function compareStateResults(label, jsResults, pyResults) {
   for (let i = 0; i < jsResults.length; i++) {
     const a = jsResults[i];

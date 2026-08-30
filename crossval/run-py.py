@@ -31,6 +31,11 @@ for time_string in cases["str2etCases"]:
     except Exception as err:  # noqa: BLE001 -- mirror run-js.mjs's catch-all
         str2et_results.append({"input": time_string, "error": str(err)})
 
+tai_results = []
+for et in cases.get("taiCases", []):
+    tai = spice.unitim(et, "ET", "TAI")
+    tai_results.append({"input": et, "tai": tai, "roundTripEt": spice.unitim(tai, "TAI", "ET")})
+
 # Every synthetic kernel.bsp segment is natively frame 1 (J2000), so a
 # spiceJS case with no `ref` (native frame, unrotated) is numerically
 # identical to explicitly requesting J2000 -- default to that here.
@@ -140,6 +145,7 @@ with open(os.path.join(FIXTURES, "results-py.json"), "w") as f:
     json.dump(
         {
             "str2etResults": str2et_results,
+            "taiResults": tai_results,
             "spkezResults": spkez_results,
             "spkezrResults": spkezr_results,
             "spkStateResults": spk_state_results,
@@ -156,7 +162,7 @@ with open(os.path.join(FIXTURES, "results-py.json"), "w") as f:
     )
 
 print(
-    f"spiceypy: {len(str2et_results)} str2et cases, {len(spkez_results)} spkez cases, "
+    f"spiceypy: {len(str2et_results)} str2et cases, {len(tai_results)} tai cases, {len(spkez_results)} spkez cases, "
     f"{len(spkezr_results)} spkezr cases, {len(spk_state_results)} spkState cases, "
     f"{len(body_value_results)} bodyValues cases, {len(prop2b_results)} prop2b cases, "
     f"{len(sc_encode_results) + len(sc_decode_results) + len(sclk_to_et_results) + len(et_to_sclk_results)} sclk cases, "

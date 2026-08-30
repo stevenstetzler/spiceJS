@@ -16,6 +16,8 @@
  * DELTA_T_A, since a TDT-labeled clock reading already *is* TT.
  */
 
+import { globalPool } from '../pool.js';
+
 const LEAPSECONDS_VARS = ['DELTET/DELTA_T_A', 'DELTET/K', 'DELTET/EB', 'DELTET/M', 'DELTET/DELTA_AT'];
 const PERIODIC_TERM_VARS = ['DELTET/K', 'DELTET/EB', 'DELTET/M'];
 
@@ -119,6 +121,41 @@ export function etToTt(et, pool) {
     tt = et - k * Math.sin(e);
   }
   return tt;
+}
+
+/**
+ * TT - TAI, in seconds. Unlike DELTA_AT (UTC-TAI, a whole-second table
+ * that grows with every leap second) this offset is an exact, fixed
+ * constant by definition -- TAI itself never has leap seconds, and TT
+ * was defined to already include the 32.184s offset TAI had accumulated
+ * from ET at the moment TT superseded it. No kernel variable carries
+ * it (there is nothing to look up), and it never changes.
+ */
+const TT_MINUS_TAI = 32.184;
+
+/**
+ * Convert continuous TAI seconds past J2000 to ephemeris time (ET /
+ * TDB) seconds past J2000 -- i.e. unitim_c(tai, 'TAI', 'ET'). TAI needs
+ * no leap-second table of its own (that's the whole point of TAI), just
+ * the fixed TT-TAI offset above plus the same TT->TDB periodic term
+ * ttToEt() already applies to a TDT-labeled string.
+ */
+export function taiToEt(taiContinuousSeconds, pool = globalPool) {
+  return ttToEt(taiContinuousSeconds + TT_MINUS_TAI, pool);
+}
+
+/**
+ * Inverse of taiToEt(): ET seconds past J2000 -> continuous TAI
+ * seconds past J2000, i.e. unitim_c(et, 'ET', 'TAI'). Unlike
+ * ttToEt/etToTt (this module's other, internal-only functions) these
+ * two default `pool` to the shared global pool -- str2et()/et2utc() do
+ * the same at their own public-API layer, but taiToEt/etToTai *are*
+ * the public API (there is no real unitim_c-equivalent wrapper file
+ * the way str2et.js/et2utc.js wrap utcToEt/etToUtc), so the default
+ * belongs here instead.
+ */
+export function etToTai(et, pool = globalPool) {
+  return etToTt(et, pool) - TT_MINUS_TAI;
 }
 
 /**

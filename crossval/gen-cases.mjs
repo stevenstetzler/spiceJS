@@ -382,6 +382,13 @@ const prop2bCases = [
   { gm: 398600.4418, pvinit: [7000, 0, 0, 0, 7.5461, 0], dt: 0 }, // dt=0 identity
 ];
 
+// etToTai/taiToEt round-trip cases -- reuses the same `ets` spread
+// spkezCases already exercises (pre-1972, near-J2000, future) plus a
+// deep-past epoch, since taiToEt/etToTai need no leap-second table at
+// all (unlike utcToEt/etToUtc) and so shouldn't care whether `et`
+// predates 1972's first leap second.
+const taiCases = [...ets, -2.2e9];
+
 const str2etCases = [
   '2000-01-01T12:00:00',
   '2000-01-01T12:00:00 TDB',
@@ -466,6 +473,7 @@ fs.writeFileSync(
   JSON.stringify(
     {
       str2etCases,
+      taiCases,
       spkezCases,
       spkezrCases,
       spkStateCases,

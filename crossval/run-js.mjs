@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { furnsh, str2et, spkez, spkezr, spkState, bodyValues, prop2b, scEncode, scDecode, sclkToEt, etToSclk, ckgp, ckgpav } from '../src/index.js';
+import { furnsh, str2et, spkez, spkezr, spkState, bodyValues, prop2b, scEncode, scDecode, sclkToEt, etToSclk, ckgp, ckgpav, etToTai, taiToEt } from '../src/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixturesDir = path.join(here, 'fixtures');
@@ -19,6 +19,7 @@ furnsh(path.join(fixturesDir, 'ck.bc'));
 
 const {
   str2etCases,
+  taiCases,
   spkezCases,
   spkezrCases,
   spkStateCases,
@@ -38,6 +39,11 @@ const str2etResults = str2etCases.map((timeString) => {
   } catch (err) {
     return { input: timeString, error: err.message };
   }
+});
+
+const taiResults = (taiCases || []).map((et) => {
+  const tai = etToTai(et);
+  return { input: et, tai, roundTripEt: taiToEt(tai) };
 });
 
 const spkezResults = spkezCases.map((c) => {
@@ -130,6 +136,7 @@ fs.writeFileSync(
   JSON.stringify(
     {
       str2etResults,
+      taiResults,
       spkezResults,
       spkezrResults,
       spkStateResults,
@@ -146,7 +153,7 @@ fs.writeFileSync(
   )
 );
 console.log(
-  `spiceJS: ${str2etResults.length} str2et cases, ${spkezResults.length} spkez cases, ` +
+  `spiceJS: ${str2etResults.length} str2et cases, ${taiResults.length} tai cases, ${spkezResults.length} spkez cases, ` +
     `${spkezrResults.length} spkezr cases, ${spkStateResults.length} spkState cases, ` +
     `${bodyValueResults.length} bodyValues cases, ${prop2bResults.length} prop2b cases, ` +
     `${scEncodeResults.length + scDecodeResults.length + sclkToEtResults.length + etToSclkResults.length} sclk cases, ` +

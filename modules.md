@@ -48,7 +48,10 @@ browser's own built-ins.
 Both re-export the same public surface otherwise: `KernelPool`/`globalPool`,
 `load()`, `createMemoryCache()`/`createIndexedDbCache()`, `openRemoteSpk()`/
 `openRemotePck()`/`openRemoteFile()`, `str2et()`, `et2utc()`/`et2utcCalendar()`,
+`et2tai()`/`et2taiCalendar()`, `taiToEt()`/`etToTai()`, `parseTimeString()`,
 `spkState()`/`spkSegments()`/`spkez()`/`spkezr()`, `pckSegments()`,
+`ckSegments()`/`ckgp()`/`ckgpav()`, `scEncode()`/`scDecode()`/`sclkToEt()`/
+`etToSclk()`/`etToSclkDiscrete()`/`scTicksForFields()`/`scPartitions()`,
 `bodyCode()`/`bodyName()`, `bodyValues()`, `prop2b()`, `frameId()`.
 
 **Internal layout** -- grouped by what each piece does, not strictly
@@ -85,9 +88,14 @@ one-file-per-bullet (some files are small and paired):
   propagator, elliptical/parabolic/hyperbolic uniformly), `math/stumpff.js`
   (the Stumpff functions it needs).
 - **Time system** -- `str2et.js` (time-string → ET), `et2utc.js` (the
-  round-trip inverse), `time/parseTimeString.js` (the actual string
-  grammar), `time/calendar.js` (calendar ↔ continuous-seconds-past-J2000),
-  `time/deltet.js` (ET ↔ UTC/TDT via a loaded leapseconds kernel),
+  round-trip inverse), `et2tai.js` (the TAI-timescale sibling of
+  `et2utc.js` -- no real `et2tai_c` exists in CSPICE, the equivalent is
+  `unitim_c(et, 'ET', 'TAI')` plus your own formatting), `time/
+  parseTimeString.js` (the actual string grammar), `time/calendar.js`
+  (calendar ↔ continuous-seconds-past-J2000), `time/deltet.js` (ET ↔
+  UTC/TDT via a loaded leapseconds kernel, plus ET ↔ TAI -- the latter
+  needs no leapseconds kernel at all, just the fixed 32.184s TT-TAI
+  offset),
   `sclk.js` (spacecraft clock: clock-string ↔ ticks, ticks ↔ ET, via a
   loaded `KPL/SCLK` text kernel -- what `ck.js`'s pointing lookups are
   indexed by).
@@ -189,10 +197,11 @@ vectors alike -- from live kernel data, in the browser, with
   is exercised at once -- see its own
   [README](examples/browser-demo/README.md) for the full rundown.
 - **The curated pages** -- fixed configurations built on
-  `examples/shared/`'s extracted, non-UI API (scale math, orbit/
-  trajectory sampling, prefetch, satellite resolution, the Horizons
-  client -- full reference in
-  [`examples/shared/api.md`](examples/shared/api.md)):
+  `examples/shared/`'s extracted API (scale math, orbit/trajectory
+  sampling, prefetch, satellite resolution, the Horizons client, and
+  one small DOM-touching exception -- the "Reference epoch"
+  text/datetime/UTC-TAI controls, `examples/shared/epochInput.js` --
+  full reference in [`examples/shared/api.md`](examples/shared/api.md)):
   `solar-system/index.html`, `solar-system/trajectory/index.html`,
   `examples/shared/templates/body/index.html` and
   `.../body-trajectory/index.html` (served at `/<body>/` and
@@ -201,7 +210,8 @@ vectors alike -- from live kernel data, in the browser, with
   slug to the shared template), and `close-approach/index.html`.
   `examples/browser-demo/index.html` deliberately does **not** import
   from `examples/shared/` -- it stays independent, not refactored to
-  share this code.
+  share this code (its own copy of `epochInput.js`'s widget is kept in
+  sync by hand for the same reason).
 
 **Depends on layer 1 directly** -- every page imports `str2et`/
 `et2utcCalendar`/`spkez`/`bodyValues`/`prop2b`/`openRemoteSpk`/
