@@ -101,6 +101,10 @@ one-file-per-bullet (some files are small and paired):
 what keeps it honest):
 
 - `test/` -- unit tests, roughly one file per `src/` module.
+  `test/dist.test.js` is the one exception -- it builds and then
+  actually exercises the *built* `dist/` bundles (see `scripts/build.mjs`
+  below), not `src/` directly, so a broken build can't ship with every
+  other test still green.
 - `crossval/` -- generates synthetic kernels and a shared case list,
   runs them through spiceJS *and* `spiceypy`, and diffs the results
   (`npm run crossval`); see `crossval/README.md`.

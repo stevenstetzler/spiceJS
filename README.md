@@ -121,16 +121,25 @@ No npm/bundler at all — a minified, browser-ready build (`src/browser.js`
 bundled with esbuild, see `scripts/build.mjs`) is attached to each
 version-tagged [GitHub Release](https://github.com/stevenstetzler/spiceJS/releases),
 built automatically by `.github/workflows/release.yml` on every `v*.*.*`
-tag push:
+tag push. `/releases/latest/download/...` always resolves to the
+newest release's matching asset — no version number to edit in your
+own code as new releases ship:
 
 ```html
 <!-- ES module -->
 <script type="module">
-  import { load, str2et, spkezr } from 'https://github.com/stevenstetzler/spiceJS/releases/download/v<version>/spicejs.esm.min.js';
+  import { load, str2et, spkezr } from 'https://github.com/stevenstetzler/spiceJS/releases/latest/download/spicejs.esm.min.js';
 </script>
 
 <!-- or a plain global, everything lands on window.spicejs -->
-<script src="https://github.com/stevenstetzler/spiceJS/releases/download/v<version>/spicejs.global.min.js"></script>
+<script src="https://github.com/stevenstetzler/spiceJS/releases/latest/download/spicejs.global.min.js"></script>
+```
+
+To pin an exact version instead (reproducible builds, no risk of a
+future release changing behavior under you), name the tag directly:
+
+```html
+<script src="https://github.com/stevenstetzler/spiceJS/releases/download/v0.1.0/spicejs.global.min.js"></script>
 ```
 
 See `examples/basic.mjs`, `examples/spk.mjs`, `examples/pck.mjs` for
