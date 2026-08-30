@@ -1,0 +1,48 @@
+name: Release
+
+# Fires on any version tag push (v0.1.0, v1.2.3, ...) -- the only
+# supported way to cut a release: push a tag, this builds and attaches
+# the browser-ready bundles automatically. See scripts/build.mjs for
+# what actually gets built and docs/browser-support.md for the design
+# behind src/browser.js, the entry point being bundled.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write # to create the GitHub Release and upload assets
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      # Gate the release on the same correctness bar everything else in
+      # this repo is held to -- a broken build never ships. (Not
+      # `npm run crossval`/`npm run perf`: both need network access to
+      # naif.jpl.nasa.gov and/or `pip install spiceypy`, neither of
+      # which this runner has -- see crossval/README.md/perf/README.md.
+      # `npm test` alone is the network-free, no-extra-setup bar
+      # deploy.md's old "Verifying an install" section already drew
+      # this same line at.)
+      - run: npm test
+
+      - run: npm run build
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/spicejs.esm.min.js
+            dist/spicejs.esm.min.js.map
+            dist/spicejs.global.min.js
+            dist/spicejs.global.min.js.map
+          generate_release_notes: true
