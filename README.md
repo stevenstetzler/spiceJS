@@ -117,6 +117,22 @@ Or clone the repo directly and import from `src/`:
 import { furnsh, str2et, spkezr } from './src/index.js';
 ```
 
+No npm/bundler at all — a minified, browser-ready build (`src/browser.js`
+bundled with esbuild, see `scripts/build.mjs`) is attached to each
+version-tagged [GitHub Release](https://github.com/stevenstetzler/spiceJS/releases),
+built automatically by `.github/workflows/release.yml` on every `v*.*.*`
+tag push:
+
+```html
+<!-- ES module -->
+<script type="module">
+  import { load, str2et, spkezr } from 'https://github.com/stevenstetzler/spiceJS/releases/download/v<version>/spicejs.esm.min.js';
+</script>
+
+<!-- or a plain global, everything lands on window.spicejs -->
+<script src="https://github.com/stevenstetzler/spiceJS/releases/download/v<version>/spicejs.global.min.js"></script>
+```
+
 See `examples/basic.mjs`, `examples/spk.mjs`, `examples/pck.mjs` for
 runnable end-to-end examples, and the doc comment on each exported
 function (`src/*.js`) for full parameter/behavior details. For a real
@@ -130,6 +146,7 @@ a range-caching download proxy, and a three.js visualization — see
 npm test         # node's built-in test runner
 npm run crossval  # cross-validate against spiceypy -- see below
 npm run perf      # lazy-loading network/accuracy benchmark against real de440.bsp
+npm run build     # builds dist/spicejs.{esm,global}.min.js -- see "Install" above
 ```
 
 ### Validating against real CSPICE

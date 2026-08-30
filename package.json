@@ -18,7 +18,8 @@
   "scripts": {
     "test": "node --test test/*.test.js test/*/*.test.js",
     "crossval": "node crossval/gen-cases.mjs && python3 crossval/gen-ck-fixture.py && node crossval/run-js.mjs && python3 crossval/run-py.py && node crossval/compare.mjs",
-    "perf": "node perf/benchmark.mjs && python3 perf/spiceypy-reference.py && node perf/report.mjs"
+    "perf": "node perf/benchmark.mjs && python3 perf/spiceypy-reference.py && node perf/report.mjs",
+    "build": "node scripts/build.mjs"
   },
   "files": [
     "src"
@@ -38,6 +39,7 @@
     "url": "git+https://github.com/stevenstetzler/spiceJS.git"
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
     "fake-indexeddb": "^6.2.5"
   }
 }

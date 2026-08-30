@@ -1,0 +1,76 @@
+name: Release
+
+# Fires on any version tag push (v0.1.0, v1.2.3, ...) -- the only
+# supported way to cut a release: push a tag, this builds and attaches
+# the browser-ready bundles automatically. See scripts/build.mjs for
+# what actually gets built and docs/browser-support.md for the design
+# behind src/browser.js, the entry point being bundled.
+#
+# Deliberately narrow, on purpose:
+# - A pull_request (open/sync/whatever) can never fire this at all --
+#   `pull_request` isn't in the trigger list below, only `push`, so PR
+#   activity has no path to this workflow regardless of what's in the
+#   PR's diff.
+# - A fork's own tag push can't reach this workflow either: a push to
+#   a fork is an event on the *fork's* repository, which only runs the
+#   fork's own copy of this file, under the fork's own Actions/tokens
+#   -- it structurally cannot execute here or touch this repo's
+#   Releases.
+# - What GitHub's own trigger *doesn't* restrict: which branch a tag
+#   points to -- a tag can be cut from any commit on any branch, not
+#   just main. That's enforced by hand, in the first real step below,
+#   since there's no trigger-level way to say "only if this tag is on
+#   main."
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write # to create the GitHub Release and upload assets
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history for every branch/tag (not just the tagged
+          # commit) -- the next step needs `origin/main` to check
+          # ancestry against.
+          fetch-depth: 0
+
+      - name: Refuse to release a tag that isn't on main
+        run: |
+          if ! git merge-base --is-ancestor "${{ github.sha }}" origin/main; then
+            echo "::error::${{ github.ref_name }} (commit ${{ github.sha }}) is not reachable from main -- refusing to release from a tag cut on another branch."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      # Gate the release on the same correctness bar everything else in
+      # this repo is held to -- a broken build never ships. (Not
+      # `npm run crossval`/`npm run perf`: both need network access to
+      # naif.jpl.nasa.gov and/or `pip install spiceypy`, neither of
+      # which this runner has -- see crossval/README.md/perf/README.md.
+      # `npm test` alone is the network-free, no-extra-setup bar
+      # deploy.md's old "Verifying an install" section already drew
+      # this same line at.)
+      - run: npm test
+
+      - run: npm run build
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/spicejs.esm.min.js
+            dist/spicejs.esm.min.js.map
+            dist/spicejs.global.min.js
+            dist/spicejs.global.min.js.map
+          generate_release_notes: true

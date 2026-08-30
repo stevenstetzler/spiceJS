@@ -113,3 +113,10 @@ what keeps it honest):
   and the runnable examples in `examples/` all load. No binary
   SPK/PCK/CK kernels are checked in or fetched here -- this library
   reads whatever bytes it's handed. See `kernels/README.md`.
+- `scripts/build.mjs` (`npm run build`) -- bundles `src/browser.js`
+  with esbuild into `dist/spicejs.esm.min.js`/`spicejs.global.min.js`,
+  the drop-in browser builds attached to each version-tagged GitHub
+  Release by `.github/workflows/release.yml` (fires on a `v*.*.*` tag
+  push -- `npm test`, then build, then upload). Not committed to git
+  (`dist/` is gitignored) -- see the README's "Install" section for
+  how to actually use one.
