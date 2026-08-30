@@ -15,8 +15,7 @@ name: Release
 #   a fork is an event on the *fork's* repository, which only runs the
 #   fork's own copy of this file, under the fork's own Actions/tokens
 #   -- it structurally cannot execute here or touch this repo's
-#   Releases. The `if:` on the job below is a second, explicit belt on
-#   top of that, not a substitute for it.
+#   Releases.
 # - What GitHub's own trigger *doesn't* restrict: which branch a tag
 #   points to -- a tag can be cut from any commit on any branch, not
 #   just main. That's enforced by hand, in the first real step below,
@@ -32,11 +31,6 @@ permissions:
 
 jobs:
   build-and-release:
-    # Redundant with push's own scoping (see the trigger comment above
-    # -- a fork's tag push can never reach this workflow to begin
-    # with), but explicit here so a release can't happen from anywhere
-    # but this repo even if that ever stops being true.
-    if: github.repository == 'stevenstetzler/spiceJS'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
