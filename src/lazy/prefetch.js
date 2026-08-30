@@ -71,6 +71,50 @@ async function ensureSummaryRecords(remoteFile, fileRecord) {
   }
 }
 
+/**
+ * Structurally scans a remote SPK's own summary records for every body
+ * it carries -- target, declared center, real `[etStart, etEnd]`
+ * coverage (unioned across however many segments that target has), and
+ * which segment types are present -- with no position/state data
+ * fetched at all, only the summary-record chain (a handful of 1024-
+ * byte records, `ensureSummaryRecords()` above). Cheap enough to call
+ * up front, before deciding what (if anything) to `prefetchSpkQuery()`.
+ *
+ * The motivating case: a UI wanting to know "does this remote kernel
+ * actually cover the body/time-range I care about" before spending a
+ * real prefetch on it -- e.g. resolving which of several candidate
+ * satellite kernels actually has a given moon, or narrowing a page's
+ * own reference-epoch range to a body's real coverage rather than
+ * assuming the whole file matches. Not needed for the common case of
+ * `openRemoteSpk()`/`prefetchSpkQuery()` alone, which already know
+ * exactly what they're looking for.
+ *
+ * @param {import('./remoteFile.js').RemoteFile} remoteFile
+ * @returns {Promise<Map<number, {target: number, center: number, etStart: number, etEnd: number, types: Set<number>}>>}
+ */
+export async function discoverSpkBodies(remoteFile) {
+  await remoteFile.ensureRange(0, FILE_RECORD_BYTES);
+  const fileRecord = parseFileRecord(remoteFile.buffer);
+  await ensureSummaryRecords(remoteFile, fileRecord);
+  const daf = parseDaf(remoteFile.buffer);
+
+  const bodies = new Map();
+  for (const summary of daf.summaries) {
+    const [target, center, , type] = summary.ic;
+    const [begin, end] = summary.dc;
+    let b = bodies.get(target);
+    if (!b) {
+      b = { target, center, etStart: begin, etEnd: end, types: new Set() };
+      bodies.set(target, b);
+    } else {
+      b.etStart = Math.min(b.etStart, begin);
+      b.etEnd = Math.max(b.etEnd, end);
+    }
+    b.types.add(type);
+  }
+  return bodies;
+}
+
 function dedupeByStartAddr(segments) {
   const seen = new Set();
   const out = [];

@@ -27,7 +27,11 @@ dependencies, on anything outside Node's/the browser's own built-ins.
 
 Both re-export the same public surface otherwise: `KernelPool`/`globalPool`,
 `load()`, `createMemoryCache()`/`createIndexedDbCache()`, `openRemoteSpk()`/
-`openRemotePck()`/`openRemoteFile()`, `str2et()`, `et2utc()`/`et2utcCalendar()`,
+`openRemotePck()`/`openRemoteFile()`, `prefetchSpkQuery()`/`prefetchSpkBodySegment()`/
+`discoverSpkBodies()` (the lower-level lazy-loading primitives `openRemoteSpk()`
+itself is built on -- for a consumer merging more than one lazily-loaded
+SPK into one shared pool, or wanting a remote SPK's own body/coverage
+list before deciding what to prefetch), `str2et()`, `et2utc()`/`et2utcCalendar()`,
 `et2tai()`/`et2taiCalendar()`, `taiToEt()`/`etToTai()`, `parseTimeString()`,
 `spkState()`/`spkSegments()`/`spkez()`/`spkezr()`, `pckSegments()`,
 `ckSegments()`/`ckgp()`/`ckgpav()`, `scEncode()`/`scDecode()`/`sclkToEt()`/
@@ -93,8 +97,10 @@ one-file-per-bullet (some files are small and paired):
   population-tracked view of a remote file), `lazy/byteRange.js`
   (segment descriptor + query window → exact bytes needed),
   `lazy/prefetch.js` (the environment-agnostic "discover, find
-  segments, ensure range" core), `lazy/pckPrefetch.js` (PCK's
-  find/add-segments for that core), `lazy/openRemoteSpk.js`/
+  segments, ensure range" core -- also exports `discoverSpkBodies()`,
+  a structural-only summary-record scan for a remote SPK's own
+  body/coverage list, no segment data fetched), `lazy/pckPrefetch.js`
+  (PCK's find/add-segments for that core), `lazy/openRemoteSpk.js`/
   `lazy/openRemotePck.js` (the public `prefetch()`-based entry points).
 
 **Supporting infrastructure** (not shipped as part of the library, but
