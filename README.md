@@ -17,6 +17,8 @@ follows), and cross-checked against real CSPICE output via
 rather than relying on documentation and hand derivation alone — see
 "Validating against real CSPICE" below.
 
+This software and documentation in this projects has primarily been written by Claude Code.
+
 ## Features
 
 - A **kernel pool** (`furnsh`/`unload`/`kclear`), matching SPICE's
