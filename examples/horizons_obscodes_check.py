@@ -10,14 +10,15 @@ SPICE side (spiceypy): Earth wrt SSB (DE440s) + ITRF93 -> J2000 rotation of
 the Earth-fixed site vector (SPICE georec).  Both sides use the WGS84 ellipsoid
 so the ellipsoid itself cannot contribute to the difference.
 
-Site coordinates: by default derived from the MPC parallax constants in
-ObsCodesF.html (rho*cos(phi'), rho*sin(phi') in equatorial Earth radii), which
-fixes longitude, geodetic latitude and a height.  Pass --sites-csv
-(code,lon_deg_east,lat_deg,alt_m) to override with e.g. Project Pluto values.
+Site coordinates (longitude E, geodetic latitude, altitude) come from the
+Project Pluto observatory-code list (https://projectpluto.com/obsc.htm), saved
+verbatim in examples/data/projectpluto_obsc.txt.  Rows with zero parallax
+constants (spacecraft, roving observers, geocentric) have no ground position
+and are skipped.
 
 Usage:
-    python3 examples/horizons_obscodes_check.py --mpc ObsCodesF.html
-    python3 examples/horizons_obscodes_check.py --mpc ObsCodesF.html --sites-csv sites.csv
+    python3 examples/horizons_obscodes_check.py
+    python3 examples/horizons_obscodes_check.py --codes 027,500,F51
 """
 import argparse
 import csv
@@ -66,32 +67,30 @@ def read_text(src):
     return Path(src).read_text(encoding="utf-8", errors="replace")
 
 
-ROW = re.compile(r"^(\w{3})\s+(-?\d+(?:\.\d*)?)\s+(\d+(?:\.\d*)?)\s+([+-]?\d+(?:\.\d*)?)\s+(.*)$")
+ROW = re.compile(
+    r"^(\w{3})\s+(-?\d+(?:\.\d*)?)\s+([+-]\d+(?:\.\d*)?)\s+(-?\d+(?:\.\d*)?)"
+    r"\s+(\d+(?:\.\d*)?)\s+([+-]\d+(?:\.\d*)?)\s+(.*)$"
+)
+DEFAULT_SITES = Path(__file__).resolve().parent / "data" / "projectpluto_obsc.txt"
 
 
-def parse_mpc(text):
-    """ObsCodesF rows: code, east longitude (deg), rho*cos(phi'), rho*sin(phi'), name.
-    Works on the raw .html (a <pre> block) or a plain-text copy.  Rows without
-    parallax constants (spacecraft, roving observers) don't match and are skipped."""
+def parse_pluto(text):
+    """Rows: code, E longitude (deg), geodetic latitude (deg), altitude (m),
+    rho*cos(phi'), rho*sin(phi'), then 'region  name'.  Returns
+    {code: {lon, lat, alt_km, name}} for ground sites only."""
     sites = {}
-    for line in html.unescape(re.sub(r"<[^>]+>", "", text)).splitlines():
+    for line in text.splitlines():
         m = ROW.match(line.rstrip())
         if not m:
             continue
-        code, lon, c, s_, name = m.groups()
-        c, s_ = float(c), float(s_)
-        if c == 0 and s_ == 0:
+        code, lon, lat, alt, c, s_, rest = m.groups()
+        if float(c) == 0 and float(s_) == 0:
             continue
-        sites[code] = {"code": code, "lon": float(lon) % 360.0, "cos": c, "sin": s_, "name": name.strip()}
+        sites[code] = {
+            "code": code, "lon": float(lon) % 360.0, "lat": float(lat),
+            "alt_km": float(alt) / 1000.0, "name": rest.strip(),
+        }
     return sites
-
-
-def geodetic_from_mpc(site):
-    """MPC parallax constants -> (lon_deg E, lat_deg geodetic, alt_km) on WGS84."""
-    lam = np.radians(site["lon"])
-    rec = A_KM * np.array([site["cos"] * np.cos(lam), site["cos"] * np.sin(lam), site["sin"]])
-    lon, lat, alt = sp.recgeo(rec, A_KM, F)
-    return np.degrees(lon), np.degrees(lat), alt
 
 
 def spice_observer(lon_deg, lat_deg, alt_km, et):
@@ -121,8 +120,7 @@ def horizons_state(location, jd_tdb, retries=4):
 def main():
     global TARGET
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--mpc", required=True, help="ObsCodesF.html (path or URL)")
-    ap.add_argument("--sites-csv", help="code,lon_deg_east,lat_deg,alt_m overriding MPC-derived coordinates")
+    ap.add_argument("--sites", default=str(DEFAULT_SITES), help="Project Pluto obsc list (path or URL)")
     ap.add_argument("--codes", help="comma-separated subset of codes")
     ap.add_argument("--target", default=TARGET, help="Horizons COMMAND (default Juno, -61)")
     ap.add_argument("--workers", type=int, default=4)
@@ -135,26 +133,22 @@ def main():
     jd_tdb = 2451545.0 + et / 86400.0
     print(f"epoch {EPOCH_UTC} UTC  ET {et:.6f}  JD(TDB) {jd_tdb:.9f}  target {TARGET}")
 
-    sites = parse_mpc(read_text(args.mpc))
-    override = {}
-    if args.sites_csv:
-        with open(args.sites_csv) as fh:
-            for r in csv.reader(fh):
-                if r and not r[0].startswith("#"):
-                    override[r[0].strip()] = (float(r[1]), float(r[2]), float(r[3]) / 1000.0)
+    sites = parse_pluto(read_text(args.sites))
     codes = args.codes.split(",") if args.codes else sorted(sites)
-    print(f"{len(codes)} sites ({len(override)} with coordinate overrides)")
+    print(f"{len(codes)} ground sites")
 
     state_a = horizons_state("500@0", jd_tdb)  # Juno wrt SSB, once
 
     # Geometry (SPICE) is cheap and CSPICE is not thread-safe: do it serially.
     # Only the slow network queries run in the thread pool.
-    geo = {}
-    for code in codes:
-        geo[code] = override.get(code) or geodetic_from_mpc(sites[code])
+    geo = {c: (sites[c]["lon"], sites[c]["lat"], sites[c]["alt_km"]) for c in codes}
 
-    def fetch(code):
-        lon, lat, alt = geo[code]
+    # Many stations share identical coordinates: query each distinct one once.
+    unique = sorted({geo[c] for c in codes})
+    print(f"{len(unique)} distinct coordinates -> Horizons queries")
+
+    def fetch(key):
+        lon, lat, alt = key
         lon_h = lon - 360.0 if lon > 180 else lon
         try:
             return horizons_state({"lon": lon_h, "lat": lat, "elevation": alt}, jd_tdb)
@@ -162,7 +156,12 @@ def main():
             return exc
 
     with ThreadPoolExecutor(args.workers) as ex:
-        topo = list(ex.map(fetch, codes))
+        fetched = {}
+        for i, (key, val) in enumerate(zip(unique, ex.map(fetch, unique)), 1):
+            fetched[key] = val
+            if i % 200 == 0:
+                print(f"  {i}/{len(unique)}", file=sys.stderr, flush=True)
+    topo = [fetched[geo[c]] for c in codes]
 
     results = []
     for code, b in zip(codes, topo):
